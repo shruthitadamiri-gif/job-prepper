@@ -7,6 +7,9 @@ from tools.jd_parser import parse_jd
 from agents.resume_agent import run_resume_agent
 from agents.prep_agent import run_prep_agent
 from agents.evaluator import run_evaluator
+from agents.ats_agent import run_ats_agent
+from tools.docx_export import resume_to_docx
+from tools.jd_fetcher import fetch_jd_from_url
 from graph import build_graph
 
 # ---------------------------------------------------------------
@@ -62,11 +65,48 @@ if st.session_state.stage == "input":
         placeholder="e.g. Senior AI Product Manager at Google DeepMind"
     )
 
-    jd_text = st.text_area(
-        "Paste the full job description",
-        height=300,
-        placeholder="Paste the complete job description here..."
+    input_mode = st.radio(
+        "How would you like to provide the job description?",
+        options=["Paste text", "Enter a URL"],
+        horizontal=True
     )
+
+    jd_text = ""
+
+    if input_mode == "Paste text":
+        jd_text = st.text_area(
+            "Paste the full job description",
+            height=300,
+            placeholder="Paste the complete job description here...",
+            value=st.session_state.get("jd_text_draft", "")
+        )
+    else:
+        jd_url = st.text_input(
+            "Job posting URL",
+            placeholder="https://company.com/careers/job-id"
+        )
+        col_a, col_b = st.columns([1, 3])
+        with col_a:
+            fetch_btn = st.button("Fetch job description", use_container_width=True)
+
+        if fetch_btn:
+            if not jd_url.strip():
+                st.error("Please enter a URL first.")
+            else:
+                with st.spinner("Fetching the job posting..."):
+                    fetch_result = fetch_jd_from_url(jd_url.strip())
+                if fetch_result["success"]:
+                    st.session_state.jd_text_draft = fetch_result["jd_text"]
+                    st.success(fetch_result["message"])
+                else:
+                    st.warning(fetch_result["message"])
+
+        jd_text = st.text_area(
+            "Fetched job description (review and edit before running, or paste manually if fetch failed)",
+            height=300,
+            value=st.session_state.get("jd_text_draft", ""),
+            placeholder="Fetched content will appear here — or paste the job description manually."
+        )
 
     col1, col2 = st.columns([1, 3])
     with col1:
@@ -74,11 +114,13 @@ if st.session_state.stage == "input":
 
     if run_btn:
         if not jd_text.strip():
-            st.error("Please paste a job description first.")
+            st.error("Please paste a job description or fetch one from a URL first.")
         else:
             st.session_state.stage = "running"
             st.session_state.jd_text = jd_text
             st.session_state.role = role
+            if "jd_text_draft" in st.session_state:
+                del st.session_state["jd_text_draft"]
             st.rerun()
 
 # ---------------------------------------------------------------
@@ -87,37 +129,42 @@ if st.session_state.stage == "input":
 elif st.session_state.stage == "running":
 
     st.subheader("Running your agentic job prep system...")
-    st.caption("Four agents are working in sequence. This takes about 30–60 seconds.")
+    st.caption("Five agents are working in sequence. This takes about 30–60 seconds.")
 
     progress = st.progress(0)
     status = st.empty()
 
     try:
-        status.info("🔍 Step 1/4 — Parsing job description...")
+        status.info("🔍 Step 1/5 — Parsing job description...")
         progress.progress(10)
         parsed_jd = parse_jd(st.session_state.jd_text)
-        progress.progress(25)
+        progress.progress(20)
 
-        status.info("📝 Step 2/4 — Tailoring your resume...")
+        status.info("📝 Step 2/5 — Tailoring your resume...")
         resume_output = run_resume_agent(st.session_state.jd_text, parsed_jd)
-        progress.progress(50)
+        progress.progress(40)
 
-        status.info("🎯 Step 3/4 — Building interview prep...")
+        status.info("🎯 Step 3/5 — Building interview prep...")
         prep_output = run_prep_agent(st.session_state.jd_text, parsed_jd)
-        progress.progress(75)
+        progress.progress(60)
 
-        status.info("⚖️ Step 4/4 — Evaluating quality...")
+        status.info("⚖️ Step 4/5 — Evaluating quality...")
         eval_result = run_evaluator(
             resume_output, prep_output,
             st.session_state.jd_text, parsed_jd
         )
+        progress.progress(80)
+
+        status.info("🧩 Step 5/5 — Checking ATS keyword coverage...")
+        ats_result = run_ats_agent(resume_output, parsed_jd)
         progress.progress(100)
 
         st.session_state.result = {
             "parsed_jd": parsed_jd,
             "resume_output": resume_output,
             "prep_output": prep_output,
-            "eval_result": eval_result
+            "eval_result": eval_result,
+            "ats_result": ats_result
         }
         st.session_state.approved_resume = resume_output
         st.session_state.approved_prep = prep_output
@@ -173,6 +220,26 @@ elif st.session_state.stage == "review":
         else:
             st.warning(f"⚠️ Overall score: {overall}/10 — below threshold, review carefully")
 
+    # ATS keyword gap analysis
+    ats_result = result["ats_result"]
+    with st.expander("🧩 ATS keyword gap analysis", expanded=True):
+        st.markdown(f"**Keyword coverage: {ats_result['coverage_percent']}%** "
+                     f"({len(ats_result['matched_keywords'])}/{ats_result['total_keywords']} JD keywords found in resume)")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("✅ **Matched keywords**")
+            if ats_result["matched_keywords"]:
+                st.write(", ".join(ats_result["matched_keywords"]))
+            else:
+                st.caption("None matched.")
+        with col2:
+            st.markdown("❌ **Missing keywords**")
+            if ats_result["missing_keywords"]:
+                st.write(", ".join(ats_result["missing_keywords"]))
+                st.caption("Consider weaving these into the resume if truthful.")
+            else:
+                st.caption("None missing — full coverage!")
+
     st.divider()
 
     # Tabs for resume and prep
@@ -190,7 +257,9 @@ elif st.session_state.stage == "review":
         with col1:
             if st.button("✅ Approve Resume", type="primary"):
                 st.session_state.approved_resume = edited_resume
+                st.session_state.result["ats_result"] = run_ats_agent(edited_resume, parsed_jd)
                 st.success("Resume approved!")
+                st.rerun()
         with col2:
             if st.button("🔄 Regenerate Resume"):
                 with st.spinner("Regenerating resume..."):
@@ -200,6 +269,7 @@ elif st.session_state.stage == "review":
                     )
                     st.session_state.approved_resume = new_resume
                     st.session_state.result["resume_output"] = new_resume
+                    st.session_state.result["ats_result"] = run_ats_agent(new_resume, parsed_jd)
                 st.rerun()
 
     with tab2:
@@ -229,18 +299,26 @@ elif st.session_state.stage == "review":
     st.divider()
 
     # Export and reset
-    col1, col2 = st.columns([1, 3])
+    col1, col2, col3 = st.columns([1, 1, 2])
     with col1:
-        if st.button("📥 Download Resume", use_container_width=True):
-            st.download_button(
-                label="Download as .txt",
-                data=st.session_state.approved_resume,
-                file_name=f"resume_{company.lower().replace(' ', '_')}.txt",
-                mime="text/plain"
-            )
+        st.download_button(
+            label="📥 Download .txt",
+            data=st.session_state.approved_resume,
+            file_name=f"resume_{company.lower().replace(' ', '_')}.txt",
+            mime="text/plain",
+            use_container_width=True
+        )
     with col2:
+        st.download_button(
+            label="📥 Download .docx",
+            data=resume_to_docx(st.session_state.approved_resume),
+            file_name=f"resume_{company.lower().replace(' ', '_')}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True
+        )
+    with col3:
         if st.button("🔁 Start Over with New JD", use_container_width=True):
-            for key in ["stage", "result", "approved_resume", "approved_prep", "jd_text", "role"]:
+            for key in ["stage", "result", "approved_resume", "approved_prep", "jd_text", "role", "jd_text_draft"]:
                 if key in st.session_state:
                     del st.session_state[key]
             st.rerun()

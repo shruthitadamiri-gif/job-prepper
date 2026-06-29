@@ -6,6 +6,7 @@ from tools.jd_parser import parse_jd
 from agents.resume_agent import run_resume_agent
 from agents.prep_agent import run_prep_agent
 from agents.evaluator import run_evaluator
+from agents.ats_agent import run_ats_agent
 
 load_dotenv()
 
@@ -18,6 +19,7 @@ class JobPrepState(TypedDict):
     resume_output: Optional[str]
     prep_output: Optional[str]
     eval_result: Optional[dict]
+    ats_result: Optional[dict]
     retry_count: int
     final_output: Optional[dict]
 
@@ -50,6 +52,11 @@ def evaluator_node(state: JobPrepState) -> JobPrepState:
     )
     return {**state, "eval_result": eval_result}
 
+def ats_agent_node(state: JobPrepState) -> JobPrepState:
+    print("Running ATS keyword gap analysis...")
+    ats_result = run_ats_agent(state["resume_output"], state["parsed_jd"])
+    return {**state, "ats_result": ats_result}
+
 def package_output_node(state: JobPrepState) -> JobPrepState:
     print("Packaging final output...")
     final_output = {
@@ -58,6 +65,7 @@ def package_output_node(state: JobPrepState) -> JobPrepState:
         "resume": state["resume_output"],
         "prep": state["prep_output"],
         "eval_scores": state["eval_result"],
+        "ats_gap": state["ats_result"],
     }
     return {**state, "final_output": final_output}
 
@@ -90,6 +98,7 @@ def build_graph():
     graph.add_node("resume_agent", resume_agent_node)
     graph.add_node("prep_agent", prep_agent_node)
     graph.add_node("evaluator", evaluator_node)
+    graph.add_node("ats_agent", ats_agent_node)
     graph.add_node("package_output", package_output_node)
 
     graph.set_entry_point("parse_jd")
@@ -101,11 +110,12 @@ def build_graph():
         "evaluator",
         should_retry,
         {
-            "pass": "package_output",
+            "pass": "ats_agent",
             "retry": "resume_agent"
         }
     )
 
+    graph.add_edge("ats_agent", "package_output")
     graph.add_edge("package_output", END)
 
     return graph.compile()
@@ -142,6 +152,7 @@ if __name__ == "__main__":
         "resume_output": None,
         "prep_output": None,
         "eval_result": None,
+        "ats_result": None,
         "retry_count": 0,
         "final_output": None
     }
