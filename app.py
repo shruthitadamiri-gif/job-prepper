@@ -11,6 +11,7 @@ from agents.evaluator import run_evaluator
 from agents.ats_agent import run_ats_agent
 from tools.docx_export import resume_to_docx
 from tools.jd_fetcher import fetch_jd_from_url
+from tools.visa_check import check_visa_sponsorship
 from graph import build_graph
 
 # ---------------------------------------------------------------
@@ -136,20 +137,37 @@ elif st.session_state.stage == "running":
     status = st.empty()
 
     try:
-        status.info("🔍 Step 1/5 — Parsing job description...")
-        progress.progress(10)
+        status.info("🔍 Step 1/6 — Parsing job description...")
+        progress.progress(8)
         parsed_jd = parse_jd(st.session_state.jd_text)
-        progress.progress(20)
+        progress.progress(16)
 
-        status.info("📝 Step 2/5 — Tailoring your resume...")
+        status.info("🛂 Step 2/6 — Checking visa sponsorship eligibility...")
+        company = parsed_jd.get("company", "this company")
+        visa_result = check_visa_sponsorship(st.session_state.jd_text, company)
+        progress.progress(24)
+
+        # Show visa check result immediately — persists below the progress bar
+        visa_placeholder = st.empty()
+        _visa_msg = f"**{visa_result['headline']}**\n\n{visa_result['detail']}"
+        if visa_result["color"] == "success":
+            visa_placeholder.success(_visa_msg)
+        elif visa_result["color"] == "error":
+            visa_placeholder.error(_visa_msg)
+        elif visa_result["color"] == "info":
+            visa_placeholder.info(_visa_msg)
+        else:
+            visa_placeholder.warning(_visa_msg)
+
+        status.info("📝 Step 3/6 — Tailoring your resume...")
         resume_output = run_resume_agent(st.session_state.jd_text, parsed_jd)
-        progress.progress(40)
+        progress.progress(42)
 
-        status.info("🎯 Step 3/5 — Searching the web for real interview Qs + building prep guide...")
+        status.info("🎯 Step 4/6 — Searching the web for real interview Qs + building prep guide...")
         prep_output = run_prep_agent(st.session_state.jd_text, parsed_jd)
         progress.progress(60)
 
-        status.info("⚖️ Step 4/5 — Evaluating quality...")
+        status.info("⚖️ Step 5/6 — Evaluating quality...")
         eval_result = run_evaluator(
             resume_output,
             json.dumps(prep_output) if isinstance(prep_output, dict) else prep_output,
@@ -157,7 +175,7 @@ elif st.session_state.stage == "running":
         )
         progress.progress(80)
 
-        status.info("🧩 Step 5/5 — Checking ATS keyword coverage...")
+        status.info("🧩 Step 6/6 — Checking ATS keyword coverage...")
         ats_result = run_ats_agent(resume_output, parsed_jd)
         progress.progress(100)
 
@@ -166,6 +184,7 @@ elif st.session_state.stage == "running":
             "resume_output": resume_output,
             "prep_output": prep_output,
             "eval_result": eval_result,
+            "visa_result": visa_result,
             "ats_result": ats_result
         }
         st.session_state.approved_resume = resume_output
@@ -193,6 +212,21 @@ elif st.session_state.stage == "review":
     role = parsed_jd.get("role", "")
     company = parsed_jd.get("company", "")
     st.subheader(f"Results: {role} at {company}")
+
+    # Visa sponsorship banner
+    visa_result = result.get("visa_result", {})
+    if visa_result:
+        _visa_msg = f"**{visa_result['headline']}**  \n{visa_result['detail']}"
+        _src = " *(source: job description)*" if visa_result.get("source") == "jd" else " *(source: public H1B records)*" if visa_result.get("source") == "web" else ""
+        _visa_msg += _src
+        if visa_result["color"] == "success":
+            st.success(_visa_msg)
+        elif visa_result["color"] == "error":
+            st.error(_visa_msg)
+        elif visa_result["color"] == "info":
+            st.info(_visa_msg)
+        else:
+            st.warning(_visa_msg)
 
     # Eval scores bar
     with st.expander("📊 Quality scores from evaluator agent", expanded=True):
