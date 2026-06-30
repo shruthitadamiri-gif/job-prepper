@@ -144,7 +144,7 @@ elif st.session_state.stage == "running":
         resume_output = run_resume_agent(st.session_state.jd_text, parsed_jd)
         progress.progress(40)
 
-        status.info("🎯 Step 3/5 — Building interview prep...")
+        status.info("🎯 Step 3/5 — Searching the web for real interview Qs + building prep guide...")
         prep_output = run_prep_agent(st.session_state.jd_text, parsed_jd)
         progress.progress(60)
 
