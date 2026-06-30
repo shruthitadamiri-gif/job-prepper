@@ -1,4 +1,5 @@
 import os
+import json
 import anthropic
 from dotenv import load_dotenv
 from tools.web_search import search_interview_questions
@@ -7,11 +8,11 @@ load_dotenv()
 
 client = anthropic.Anthropic()
 
-def run_prep_agent(jd_text: str, parsed_jd: dict) -> str:
+def run_prep_agent(jd_text: str, parsed_jd: dict) -> dict:
     """
-    Generates interview prep topics and likely questions based on the JD
-    and the candidate's background. Augments output with real interview
-    questions pulled from the web (Glassdoor, Blind, etc.) via Tavily.
+    Generates a structured interview prep guide with topic tags and
+    2-3 answer options per question. Augments with real interview
+    questions from the web via Tavily. Returns a dict (not a string).
     """
     role = parsed_jd.get("role", "this role")
     company = parsed_jd.get("company", "this company")
@@ -21,9 +22,9 @@ def run_prep_agent(jd_text: str, parsed_jd: dict) -> str:
     search_result = search_interview_questions(role, company)
     if search_result["success"]:
         web_section = f"""
-REAL INTERVIEW QUESTIONS REPORTED ONLINE (from Glassdoor, Blind, and similar sources):
-Use these to inform the questions you generate — prioritize patterns you see repeated,
-and flag any that appear verbatim as "Reported question".
+REAL INTERVIEW QUESTIONS REPORTED ONLINE (Glassdoor, Blind, etc.):
+Use these to inform the questions you generate. Set "reported": true for any
+question that closely matches something from these sources.
 
 {search_result["context"]}
 """
@@ -43,34 +44,55 @@ Key keywords from JD: {keywords}
 
 {web_section}
 
-Generate two things:
+Return ONLY a valid JSON object with this exact structure — no markdown, no code fences:
 
-1. TOP 8 PREPARATION TOPICS
-For each topic: name it, explain in 2 sentences why it matters for THIS specific role,
-and give one concrete thing she should prepare from her own experience.
+{{
+  "prep_topics": [
+    {{
+      "title": "topic name (3-6 words)",
+      "why_it_matters": "2 sentences: why this topic is critical for THIS specific role at THIS company",
+      "what_to_prepare": "one concrete thing to prep from Shruthi's own experience"
+    }}
+  ],
+  "questions": [
+    {{
+      "category": "Behavioral" | "Technical AI/ML" | "Product Sense" | "Situational",
+      "topic": "specific topic tag, 2-5 words, e.g. 'MLOps at Scale', 'Stakeholder Alignment', 'RAG Implementation', 'Responsible AI Tradeoffs'",
+      "question": "the full interview question",
+      "reported": true | false,
+      "hint": "one line: which part of Shruthi's background to draw from",
+      "answer_options": [
+        {{
+          "angle": "short label for this answer angle, e.g. 'Lead with impact', 'Lead with process', 'Lead with conflict resolution'",
+          "outline": "2-4 sentence answer outline using Shruthi's real experience — specific enough to build from"
+        }}
+      ]
+    }}
+  ]
+}}
 
-2. LIKELY INTERVIEW QUESTIONS (12 total)
-- 3 behavioral (leadership, stakeholder, conflict)
-- 3 technical AI/ML (specific to this JD)
-- 3 product sense (strategy, prioritization, metrics)
-- 3 situational (how would you handle...)
-
-Where a question matches something reported online, label it with "(Reported)" so the
-candidate knows it has appeared in real interviews. For each question add a one-line hint:
-which part of her background to draw from.
-
-Format clearly with headers and numbered lists."""
+Requirements:
+- prep_topics: exactly 8 entries
+- questions: exactly 12 entries — 3 Behavioral, 3 Technical AI/ML, 3 Product Sense, 3 Situational
+- answer_options: exactly 2 per question (not 3), each a genuinely different angle, outline max 2 sentences
+- topic tags must be specific and scannable (not generic like "Leadership" — use "Cross-team Roadmap Conflict" instead)
+- reported: true only if the question closely matches something from the web search results above
+- All answer outlines must reference Shruthi's actual experience — no generic frameworks"""
 
     message = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=2500,
+        max_tokens=8000,
         messages=[{"role": "user", "content": prompt}]
     )
 
-    return message.content[0].text
+    raw = message.content[0].text.strip()
+    raw = raw.replace("```json", "").replace("```", "").strip()
+    return json.loads(raw)
 
 
 if __name__ == "__main__":
+    import sys, os
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from tools.jd_parser import parse_jd
 
     test_jd = """
@@ -87,11 +109,6 @@ if __name__ == "__main__":
     - Experience with LLMs, model monitoring, and AI safety
     - Proven ability to work with cross-functional engineering teams
     - Track record of shipping AI products at scale
-
-    Nice to have:
-    - Background in data science or ML engineering
-    - Experience with agentic AI systems
-    - Knowledge of responsible AI practices
     """
 
     print("Parsing JD...")
@@ -100,5 +117,5 @@ if __name__ == "__main__":
     print("Running interview prep agent with web search...")
     result = run_prep_agent(test_jd, parsed)
 
-    print("\n--- INTERVIEW PREP OUTPUT ---\n")
-    print(result)
+    print("\n--- STRUCTURED OUTPUT ---\n")
+    print(json.dumps(result, indent=2)[:2000])

@@ -3,6 +3,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import json
 from tools.jd_parser import parse_jd
 from agents.resume_agent import run_resume_agent
 from agents.prep_agent import run_prep_agent
@@ -150,7 +151,8 @@ elif st.session_state.stage == "running":
 
         status.info("⚖️ Step 4/5 — Evaluating quality...")
         eval_result = run_evaluator(
-            resume_output, prep_output,
+            resume_output,
+            json.dumps(prep_output) if isinstance(prep_output, dict) else prep_output,
             st.session_state.jd_text, parsed_jd
         )
         progress.progress(80)
@@ -273,25 +275,75 @@ elif st.session_state.stage == "review":
                 st.rerun()
 
     with tab2:
-        st.markdown("**Your interview prep guide. Edit or approve as needed.**")
-        edited_prep = st.text_area(
-            "Interview prep",
-            value=st.session_state.approved_prep,
-            height=500,
-            label_visibility="collapsed"
-        )
-        col1, col2, col3 = st.columns([1, 1, 2])
+        prep = result["prep_output"]
+
+        CATEGORY_COLORS = {
+            "Behavioral":     ("#1d4ed8", "#dbeafe"),
+            "Technical AI/ML": ("#6d28d9", "#ede9fe"),
+            "Product Sense":  ("#065f46", "#d1fae5"),
+            "Situational":    ("#92400e", "#fef3c7"),
+        }
+
+        def category_badge(cat: str) -> str:
+            fg, bg = CATEGORY_COLORS.get(cat, ("#374151", "#f3f4f6"))
+            return (f'<span style="background:{bg};color:{fg};padding:2px 10px;'
+                    f'border-radius:12px;font-size:12px;font-weight:600">{cat}</span>')
+
+        def topic_badge(topic: str) -> str:
+            return (f'<span style="background:#f1f5f9;color:#475569;padding:2px 10px;'
+                    f'border-radius:12px;font-size:12px;font-weight:500;'
+                    f'border:1px solid #cbd5e1">🏷 {topic}</span>')
+
+        # --- Prep Topics ---
+        st.markdown("### 📚 Preparation Topics")
+        for i, t in enumerate(prep.get("prep_topics", []), 1):
+            with st.expander(f"**{i}. {t['title']}**", expanded=False):
+                st.markdown(f"**Why it matters:** {t['why_it_matters']}")
+                st.markdown(f"**What to prepare:** {t['what_to_prepare']}")
+
+        st.divider()
+
+        # --- Questions ---
+        st.markdown("### ❓ Interview Questions")
+
+        categories = ["Behavioral", "Technical AI/ML", "Product Sense", "Situational"]
+        questions = prep.get("questions", [])
+
+        for cat in categories:
+            cat_qs = [q for q in questions if q.get("category") == cat]
+            if not cat_qs:
+                continue
+
+            fg, bg = CATEGORY_COLORS.get(cat, ("#374151", "#f3f4f6"))
+            st.markdown(
+                f'<div style="background:{bg};color:{fg};padding:6px 14px;'
+                f'border-radius:8px;font-weight:700;font-size:14px;'
+                f'margin:20px 0 10px 0">{cat}</div>',
+                unsafe_allow_html=True
+            )
+
+            for q in cat_qs:
+                reported_tag = ' <span style="color:#dc2626;font-size:11px;font-weight:700">● REPORTED</span>' if q.get("reported") else ""
+                header_html = (
+                    f'{category_badge(q["category"])} &nbsp; {topic_badge(q["topic"])}{reported_tag}'
+                )
+                with st.expander(q["question"], expanded=False):
+                    st.markdown(header_html, unsafe_allow_html=True)
+                    st.caption(f"💡 {q['hint']}")
+                    st.markdown("**Answer angles:**")
+                    for opt in q.get("answer_options", []):
+                        st.markdown(
+                            f'<div style="background:#f8faff;border-left:3px solid #3b82f6;'
+                            f'padding:10px 14px;border-radius:0 6px 6px 0;margin:6px 0">'
+                            f'<strong>{opt["angle"]}</strong><br>{opt["outline"]}</div>',
+                            unsafe_allow_html=True
+                        )
+
+        col1, col2 = st.columns([1, 3])
         with col1:
-            if st.button("✅ Approve Prep", type="primary"):
-                st.session_state.approved_prep = edited_prep
-                st.success("Interview prep approved!")
-        with col2:
             if st.button("🔄 Regenerate Prep"):
-                with st.spinner("Regenerating interview prep..."):
-                    new_prep = run_prep_agent(
-                        st.session_state.jd_text,
-                        parsed_jd
-                    )
+                with st.spinner("Searching web + regenerating prep guide..."):
+                    new_prep = run_prep_agent(st.session_state.jd_text, parsed_jd)
                     st.session_state.approved_prep = new_prep
                     st.session_state.result["prep_output"] = new_prep
                 st.rerun()
