@@ -8,17 +8,38 @@ load_dotenv()
 
 client = anthropic.Anthropic()
 
-def run_resume_agent(jd_text: str, parsed_jd: dict) -> str:
+def run_resume_agent(jd_text: str, parsed_jd: dict, missing_keywords: list[str] | None = None) -> str:
     """
     Takes a raw JD and its parsed version, retrieves relevant resume
     chunks, and generates a tailored resume using Claude.
+
+    If missing_keywords is provided (from ATS gap analysis), the prompt
+    explicitly instructs Claude to weave those terms into the resume
+    wherever they truthfully fit the candidate's experience.
     """
     # Step 1: Build query and retrieve relevant chunks
     query = build_query_from_jd(parsed_jd)
     chunks = retrieve_relevant_chunks(query)
     context = "\n\n".join(chunks)
 
-    # Step 2: Generate tailored resume
+    # Step 2: Build ATS gap instructions if we have missing keywords
+    if missing_keywords:
+        gap_list = "\n".join(f"  - {kw}" for kw in missing_keywords)
+        ats_section = f"""
+ATS KEYWORD GAP — MANDATORY COVERAGE:
+The previous resume version was missing these keywords that appear in the JD.
+You MUST weave AT LEAST 80% of these into the resume naturally — embed them
+in bullet points and skills where they truthfully describe the candidate's
+experience. Do NOT add them as a list or force them awkwardly; every use
+must read as authentic context.
+
+Missing keywords to incorporate:
+{gap_list}
+"""
+    else:
+        ats_section = ""
+
+    # Step 3: Generate tailored resume
     prompt = f"""You are an expert AI PM resume writer.
 
 Your job is to tailor the candidate's resume for this specific role.
@@ -29,7 +50,7 @@ STRICT RULES:
 - Mirror the language and keywords from the job description where truthful
 - Lead every bullet with a metric or outcome where one exists
 - Reorder bullets so the most relevant experience comes first
-
+{ats_section}
 JOB DESCRIPTION:
 {jd_text}
 
