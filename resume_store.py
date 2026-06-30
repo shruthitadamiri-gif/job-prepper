@@ -40,7 +40,8 @@ def build_resume_store():
     print(f"Created {len(chunks)} chunks")
 
     print("Setting up ChromaDB...")
-    client = chromadb.PersistentClient(path="./chroma_db")
+    chroma_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_db")
+    client = chromadb.PersistentClient(path=chroma_path)
 
     # Delete existing collection if rebuilding
     try:
@@ -65,7 +66,8 @@ def build_resume_store():
 def retrieve_relevant_chunks(query, top_k=5):
     """Retrieve the most relevant resume chunks for a given JD query."""
     model = SentenceTransformer("all-MiniLM-L6-v2")
-    client = chromadb.PersistentClient(path="./chroma_db")
+    chroma_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_db")
+    client = chromadb.PersistentClient(path=chroma_path)
     collection = client.get_collection("resume")
 
     query_embedding = model.encode([query]).tolist()
