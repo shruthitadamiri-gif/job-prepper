@@ -264,10 +264,12 @@ elif st.session_state.stage == "review":
                 st.rerun()
         with col2:
             if st.button("🔄 Regenerate Resume"):
-                with st.spinner("Regenerating resume..."):
+                missing = result["ats_result"].get("missing_keywords", [])
+                with st.spinner(f"Regenerating resume — targeting {len(missing)} missing keyword(s)..."):
                     new_resume = run_resume_agent(
                         st.session_state.jd_text,
-                        parsed_jd
+                        parsed_jd,
+                        missing_keywords=missing
                     )
                     st.session_state.approved_resume = new_resume
                     st.session_state.result["resume_output"] = new_resume
