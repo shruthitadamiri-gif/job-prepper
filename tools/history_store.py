@@ -23,7 +23,7 @@ def save_entry(parsed_jd: dict, eval_result: dict, resume_output: str, jd_text: 
         "role": parsed_jd.get("role", "Unknown"),
         "location": parsed_jd.get("location", ""),
         "salary_range": parsed_jd.get("salary_range", ""),
-        "relevance_score": eval_result.get("overall_score", 0),
+        "relevance_score": int(eval_result.get("overall_score", 0)),
         "applied": False,
         "resume_output": resume_output,
         "jd_text": jd_text,
