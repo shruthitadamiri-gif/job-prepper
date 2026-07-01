@@ -28,7 +28,10 @@ def save_entry(parsed_jd: dict, eval_result: dict, resume_output: str, jd_text: 
         "resume_output": resume_output,
         "jd_text": jd_text,
     }
-    _client().table(TABLE).insert(entry).execute()
+    try:
+        _client().table(TABLE).insert(entry).execute()
+    except Exception as e:
+        raise RuntimeError(f"Supabase insert failed: {e}") from e
     return entry_id
 
 
