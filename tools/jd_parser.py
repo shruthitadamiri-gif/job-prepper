@@ -16,7 +16,9 @@ def parse_jd(jd_text: str) -> dict:
     
 Return ONLY a valid JSON object with these exact keys:
 - role: job title (string)
-- company: company name (string)  
+- company: company name (string)
+- location: office location or "Remote" or "Hybrid – City, State" (string, "" if not mentioned)
+- salary_range: e.g. "$150,000 – $200,000" or "£80,000 – £100,000" (string, "" if not mentioned)
 - seniority: level like "senior", "principal", "director" (string)
 - required_skills: list of must-have skills (list of strings)
 - preferred_skills: list of nice-to-have skills (list of strings)
