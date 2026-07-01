@@ -213,8 +213,11 @@ with tab_run:
 
         # Auto-save to history once per run
         if not st.session_state.history_saved:
-            save_entry(parsed_jd, eval_result, st.session_state.approved_resume, st.session_state.jd_text)
-            st.session_state.history_saved = True
+            try:
+                save_entry(parsed_jd, eval_result, st.session_state.approved_resume, st.session_state.jd_text)
+                st.session_state.history_saved = True
+            except Exception as _e:
+                st.warning(f"History save failed: {_e}")
 
         st.subheader(f"Results: {role} at {company}")
 
