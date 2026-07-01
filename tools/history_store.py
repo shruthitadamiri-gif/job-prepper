@@ -1,30 +1,20 @@
 import os
-import json
 from datetime import datetime
+from dotenv import load_dotenv
 
-HISTORY_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "history.json")
+load_dotenv()
 
-
-def _load() -> list:
-    if not os.path.exists(HISTORY_PATH):
-        return []
-    try:
-        with open(HISTORY_PATH, "r") as f:
-            return json.load(f)
-    except Exception:
-        return []
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "").strip()
+TABLE = "history"
 
 
-def _save(entries: list) -> None:
-    os.makedirs(os.path.dirname(HISTORY_PATH), exist_ok=True)
-    with open(HISTORY_PATH, "w") as f:
-        json.dump(entries, f, indent=2)
+def _client():
+    from supabase import create_client
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
 def save_entry(parsed_jd: dict, eval_result: dict, resume_output: str, jd_text: str) -> str:
-    """
-    Saves a completed job prep run to history. Returns the new entry's id.
-    """
     entry_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     entry = {
         "id": entry_id,
@@ -38,25 +28,18 @@ def save_entry(parsed_jd: dict, eval_result: dict, resume_output: str, jd_text: 
         "resume_output": resume_output,
         "jd_text": jd_text,
     }
-    entries = _load()
-    entries.insert(0, entry)  # newest first
-    _save(entries)
+    _client().table(TABLE).insert(entry).execute()
     return entry_id
 
 
 def load_history() -> list:
-    return _load()
+    resp = _client().table(TABLE).select("*").order("date_created", desc=True).execute()
+    return resp.data or []
 
 
 def set_applied(entry_id: str, applied: bool) -> None:
-    entries = _load()
-    for e in entries:
-        if e["id"] == entry_id:
-            e["applied"] = applied
-            break
-    _save(entries)
+    _client().table(TABLE).update({"applied": applied}).eq("id", entry_id).execute()
 
 
 def delete_entry(entry_id: str) -> None:
-    entries = [e for e in _load() if e["id"] != entry_id]
-    _save(entries)
+    _client().table(TABLE).delete().eq("id", entry_id).execute()
