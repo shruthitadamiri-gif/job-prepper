@@ -9,65 +9,92 @@ client = anthropic.Anthropic()
 
 RESUME_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resume.txt")
 
+FORMAT_RULES = """
+OUTPUT FORMAT — FOLLOW EXACTLY, NO EXCEPTIONS:
+
+SKILLS
+AI/ML & Data: [comma-separated skills]
+Product: [comma-separated skills]
+Tools: [comma-separated skills]
+
+EXPERIENCE
+
+[Company] | [Title] | [Location] | [Dates]
+- [Bullet starting with metric or outcome]
+- [Bullet]
+- [Bullet]
+
+[Next company, same pattern]
+
+Rules:
+- Section headers in ALL CAPS with no extra punctuation
+- Job title lines: Company | Title | Location | Dates (pipe-separated, no bold markers)
+- Every bullet starts with "- "
+- No sub-headers, no summaries, no education section, no extra blank lines between bullets
+- Keep every company and role present in the source resume — do not drop any
+"""
+
 
 def _load_resume() -> str:
     with open(RESUME_PATH, "r") as f:
         return f.read()
 
 
-def run_resume_agent(jd_text: str, parsed_jd: dict, missing_keywords: list[str] | None = None) -> str:
+def run_resume_agent(
+    jd_text: str,
+    parsed_jd: dict,
+    missing_keywords: list[str] | None = None,
+    current_resume: str | None = None,
+) -> str:
     """
-    Takes a raw JD and its parsed version, reads resume.txt directly,
-    and generates a tailored resume using Claude.
+    Generates a tailored resume for the given JD.
 
-    If missing_keywords is provided (from ATS gap analysis), the prompt
-    explicitly instructs Claude to weave those terms into the resume
-    wherever they truthfully fit the candidate's experience.
+    On first run, uses resume.txt as the source.
+    On regeneration, uses current_resume as the base so coverage
+    improvements are cumulative rather than starting from scratch.
+
+    missing_keywords: ATS gap keywords to weave in (from latest ATS result).
     """
-    context = _load_resume()
+    source = current_resume if current_resume else _load_resume()
 
-    # Step 2: Build ATS gap instructions if we have missing keywords
     if missing_keywords:
         gap_list = "\n".join(f"  - {kw}" for kw in missing_keywords)
         ats_section = f"""
-ATS KEYWORD GAP — MANDATORY COVERAGE:
-The previous resume version was missing these keywords that appear in the JD.
-You MUST weave AT LEAST 80% of these into the resume naturally — embed them
-in bullet points and skills where they truthfully describe the candidate's
-experience. Do NOT add them as a list or force them awkwardly; every use
-must read as authentic context.
+ATS KEYWORD GAP — MANDATORY:
+The current resume is missing these JD keywords. Weave AT LEAST 90% of them
+into bullets and skills lines where they truthfully apply. Do not add them
+as a standalone list. Every use must read as authentic experience.
 
-Missing keywords to incorporate:
+Missing keywords:
 {gap_list}
 """
     else:
         ats_section = ""
 
-    # Step 3: Generate tailored resume
-    prompt = f"""You are an expert AI PM resume writer.
+    prompt = f"""You are an expert resume writer specializing in AI/ML product roles.
 
-Your job is to tailor the candidate's resume for this specific role.
+TASK: Rewrite the resume below to be a stronger match for this job description.
 
-STRICT RULES:
-- Only use facts, experiences, and metrics present in the resume chunks below
-- Never invent experience, metrics, or skills that are not in the chunks
-- Mirror the language and keywords from the job description where truthful
-- Lead every bullet with a metric or outcome where one exists
-- Reorder bullets so the most relevant experience comes first
+STRICT CONTENT RULES:
+- Only use facts, experiences, and metrics already present in the source resume
+- Never invent experience, metrics, titles, or skills
+- Mirror the language and keywords from the JD where truthful
+- Lead every bullet with a metric or outcome where one exists in the source
+- Reorder bullets within each role so the most JD-relevant ones come first
+- Keep ALL companies and roles — do not drop any position
 {ats_section}
+{FORMAT_RULES}
 JOB DESCRIPTION:
 {jd_text}
 
-CANDIDATE'S RELEVANT EXPERIENCE (retrieved from resume):
-{context}
+SOURCE RESUME:
+{source}
 
-Write a tailored resume section covering Work Experience and Skills.
-Format cleanly with the company, role, dates, and bullet points.
-Do not include a summary or education section."""
+Output only the resume. No commentary, no preamble."""
 
     message = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=1500,
+        max_tokens=1800,
         messages=[{"role": "user", "content": prompt}]
     )
 
@@ -89,11 +116,6 @@ if __name__ == "__main__":
     - Experience with LLMs, model monitoring, and AI safety
     - Proven ability to work with cross-functional engineering teams
     - Track record of shipping AI products at scale
-
-    Nice to have:
-    - Background in data science or ML engineering
-    - Experience with agentic AI systems
-    - Knowledge of responsible AI practices
     """
 
     print("Parsing JD...")
