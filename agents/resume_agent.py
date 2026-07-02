@@ -2,25 +2,29 @@ import os
 import anthropic
 from dotenv import load_dotenv
 from tools.jd_parser import parse_jd
-from tools.resume_retriever import retrieve_relevant_chunks, build_query_from_jd
 
 load_dotenv()
 
 client = anthropic.Anthropic()
 
+RESUME_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resume.txt")
+
+
+def _load_resume() -> str:
+    with open(RESUME_PATH, "r") as f:
+        return f.read()
+
+
 def run_resume_agent(jd_text: str, parsed_jd: dict, missing_keywords: list[str] | None = None) -> str:
     """
-    Takes a raw JD and its parsed version, retrieves relevant resume
-    chunks, and generates a tailored resume using Claude.
+    Takes a raw JD and its parsed version, reads resume.txt directly,
+    and generates a tailored resume using Claude.
 
     If missing_keywords is provided (from ATS gap analysis), the prompt
     explicitly instructs Claude to weave those terms into the resume
     wherever they truthfully fit the candidate's experience.
     """
-    # Step 1: Build query and retrieve relevant chunks
-    query = build_query_from_jd(parsed_jd)
-    chunks = retrieve_relevant_chunks(query)
-    context = "\n\n".join(chunks)
+    context = _load_resume()
 
     # Step 2: Build ATS gap instructions if we have missing keywords
     if missing_keywords:
