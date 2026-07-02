@@ -184,6 +184,7 @@ with tab_run:
             }
             st.session_state.approved_resume = resume_output
             st.session_state.approved_prep = None
+            st.session_state.original_ats_result = ats_result
             st.session_state.stage = "review"
             status.success("Done! Reviewing your results...")
             st.rerun()
@@ -259,11 +260,33 @@ with tab_run:
 
         # ATS gap
         ats_result = result["ats_result"]
+        original_ats = st.session_state.get("original_ats_result", ats_result)
+        current_pct = ats_result["coverage_percent"]
+        original_pct = original_ats["coverage_percent"]
+        improved = current_pct > original_pct
+
         with st.expander("🧩 ATS keyword gap analysis", expanded=True):
-            st.markdown(
-                f"**Keyword coverage: {ats_result['coverage_percent']}%** "
-                f"({len(ats_result['matched_keywords'])}/{ats_result['total_keywords']} JD keywords found in resume)"
-            )
+            col_cov, col_delta = st.columns([2, 1])
+            with col_cov:
+                st.markdown(
+                    f"**Keyword coverage: {current_pct}%** "
+                    f"({len(ats_result['matched_keywords'])}/{ats_result['total_keywords']} JD keywords found in resume)"
+                )
+            with col_delta:
+                if current_pct != original_pct:
+                    delta = current_pct - original_pct
+                    arrow = "▲" if delta > 0 else "▼"
+                    color = "#059669" if delta > 0 else "#dc2626"
+                    st.markdown(
+                        f'<div style="text-align:right;padding-top:4px">'
+                        f'<span style="font-size:13px;font-weight:700;color:{color}">'
+                        f'{arrow} {abs(delta)}% vs original</span></div>',
+                        unsafe_allow_html=True
+                    )
+
+            if improved:
+                st.success(f"✅ Resume improved from {original_pct}% → {current_pct}% ATS coverage after your edits.")
+
             col1, col2 = st.columns(2)
             with col1:
                 st.markdown("✅ **Matched keywords**")
@@ -291,10 +314,9 @@ with tab_run:
             )
             col1, col2, col3 = st.columns([1, 1, 2])
             with col1:
-                if st.button("✅ Approve Resume", type="primary"):
+                if st.button("✅ Approve & Re-score ATS", type="primary"):
                     st.session_state.approved_resume = edited_resume
                     st.session_state.result["ats_result"] = run_ats_agent(edited_resume, parsed_jd)
-                    st.success("Resume approved!")
                     st.rerun()
             with col2:
                 if st.button("🔄 Regenerate Resume"):
