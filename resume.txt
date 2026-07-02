@@ -3,34 +3,30 @@ SHRUTHI TADAMIRI
 860-992-7814 | shruthi.tadamiri@gmail.com | linkedin.com/in/shruthi-tadamiri | Boston, MA
 
 SUMMARY
+Principal AI Product Manager specializing in LLM and Agentic AI product development, with a strong AI/ML foundation that enables deep collaboration with engineering and business teams. Track record of shipping AI products that drive measurable customer and business outcomes, from next-generation agentic decisioning systems to enterprise-scale model platforms.
 
-AI Product Manager specializing in LLM and Agentic AI product development — with a strong AI/ML foundation that enables deep collaboration with engineering and research teams. Track record of shipping AI products that drive measurable customer and business outcomes, from next-generation agentic decisioning systems to enterprise-scale model platforms.
-SKILLS
-
-Product: AI Governance · LLM Product Development · Agentic AI Systems · AI Guardrail Design · Responsible AI · AI Evaluations (Evals) · Experimentation & A/B Testing · Product Ownership · Roadmap Planning · Requirements Definition · Stakeholder Management · Cross-functional Delivery · Agile / JIRA
-AI/ML & Data: Python · R · SQL · LLMs · Prompt Engineering · Predictive Modeling · Recommendation Systems · Model Lifecycle Management · MLOps · Power BI · Tableau
+Product: Agentic AI Systems · LLM Product Development · AI Prototyping & Workflow Design · AI Evaluations (Evals) · Human-in-the-Loop Systems · AI Governance · Model Experimentation & A/B Testing · Roadmap Planning · Requirements Definition · Stakeholder Management · Cross-functional Delivery · Agile/JIRA
+AI/ML & Data: Prompt Engineering · RAG · AI/ML Observability · MLOps · Model Lifecycle Management · Predictive Modeling · Recommendation Systems · Python · SQL
 
 EXPERIENCE
-Verizon | Principal Engineer - Tech Product Management | Boston, MA | March 2021 - Present
+Verizon | Principal AI Product Manager | Boston, MA | March 2021 - Present
 
-Product lead for AICO, Verizon's next-generation Agentic AI program — owns strategy, workflow design, and AI guardrails for a system that replaces static routing rules with real-time personalized customer decisioning; MVP in progress
-Closed a critical customer experience gap in IVR routing — built and launched an AI model that predicts customer intent when none is provided, eliminating blind transfers to generic agent queues; reduced Average Handle Time by X% and transfer rate by Y%, impacting Z customers monthly
-Built the Model Monitoring & Optimization (MMO) platform from 0→1 — defined the vision, wrote requirements, and aligned teams across engineering and product to close a gap where no pipeline visibility existed; cut failure detection from 14 days to real-time and resolution time from 14 days to 5 days across 346 models
-Owned AI/ML product strategy for wireless consumer models across IVR and digital channels — defined investment, refresh, and retirement criteria across a portfolio of 75+ personalization and recommendation models, established KPI framework to measure performance, and drove expansion from IVR into digital
-
-Recognized with three VP-nominated Spotlight Awards across Quality, Process Improvement, and Collaboration
+Product lead for Verizon's Agentic AI routing program. Owns strategy and workflow design for a system replacing static IVR routing rules with real-time personalized customer decisioning across omnichannel touchpoints. Built working prototypes using AI tools to map end-to-end agentic workflows and validate decisioning logic before engineering build. 
+Closed a high-friction gap in IVR routing. Built and launched an AI model that predicts customer intent when none is provided, cutting blind transfers to generic agent queues. Reduced Average Handle Time by 13% and transfer rate by 10.4%, impacting 733,000 customers monthly.
+Built the Model Monitoring and Optimization platform from 0 to 1. Defined the vision, wrote requirements, and aligned teams across engineering and product where no pipeline visibility existed before. Cut failure detection from 14 days to real-time and resolution time from 14 days to 5 days across 346 production models.
+Own the product strategy for 75+ ML models driving personalization across IVR and digital channels. Set model priorities, define success metrics, and partner with data science teams on performance. Contributing to program-level delivery of 5.1M+ call deflections and $90M+ in cost savings.
 
 The RepTrak Company | Data Scientist | Boston, MA | July 2019 - March 2021
 
-Built and validated ML models and reputation indexes for enterprise clients across multiple industries — applied hypothesis testing and statistical significance frameworks to ensure insight accuracy before client release; findings influenced client business strategy and drove 40% growth in new business
-Automated manual data workflows and reporting processes using Python — eliminated repetitive analytical tasks, cutting team's daily manual effort by 60% and freeing capacity for higher-value analytical work
-Designed and launched self-service dashboards (Power BI) replacing manual reporting across internal teams — defined data requirements, led build with data engineers, and drove 30% revenue impact
+Built and validated ML models and reputation indexes for enterprise clients across multiple industries. Applied hypothesis testing and statistical significance frameworks to ensure insight accuracy before client release. Findings influenced client business strategy and go-to-market decisions.
+Migrated team analytics workflows from SPSS to Python, reducing processing time and enabling faster, more repeatable analysis across projects.
+Designed and launched self-service Power BI dashboards replacing manual reporting across internal teams. Defined data requirements and led build with data engineers.
 
 Accenture Services | Data Analyst | Bengaluru, India | Aug 2014 - Dec 2017
 
-Bridged AT&T's business and technical teams — analyzed operational requirements and translated them into system configurations across supply chain and logistics; drove 20% improvement in supply chain efficiency
-Diagnosed recurring fulfillment delays through historical data analysis — designed and validated a resource reallocation strategy that cut delays by 30% and improved order fulfillment by 40%
-Built data pipelines and established quality standards to migrate legacy systems to cloud infrastructure — resolved data integrity issues through ongoing analysis to ensure reliable data flow
+Translated AT&T's operational requirements into system configurations across supply chain and logistics. Oversaw daily operations to minimize disruptions and maintained warehouse and logistics SLAs at under 1 business day.
+Built data pipelines and established quality standards to migrate legacy systems to cloud infrastructure. Set up monitoring and ran regular audits to resolve data integrity issues and ensure reliable data flow.
+Diagnosed recurring fulfillment delays through historical data analysis. Designed and validated a resource reallocation strategy that improved order fulfillment processes across the distribution network.
 
 EDUCATION
 
