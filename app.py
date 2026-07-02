@@ -160,36 +160,30 @@ with tab_run:
             else:
                 st.warning(_visa_msg)
 
-            status.info("📝 Step 3/6 — Tailoring your resume...")
+            status.info("📝 Step 3/5 — Tailoring your resume...")
             resume_output = run_resume_agent(st.session_state.jd_text, parsed_jd)
-            progress.progress(42)
+            progress.progress(55)
 
-            status.info("🎯 Step 4/6 — Searching the web for real interview Qs + building prep guide...")
-            prep_output = run_prep_agent(st.session_state.jd_text, parsed_jd)
-            progress.progress(60)
-
-            status.info("⚖️ Step 5/6 — Evaluating quality...")
+            status.info("⚖️ Step 4/5 — Evaluating quality...")
             eval_result = run_evaluator(
-                resume_output,
-                json.dumps(prep_output) if isinstance(prep_output, dict) else prep_output,
-                st.session_state.jd_text, parsed_jd
+                resume_output, "", st.session_state.jd_text, parsed_jd
             )
             progress.progress(80)
 
-            status.info("🧩 Step 6/6 — Checking ATS keyword coverage...")
+            status.info("🧩 Step 5/5 — Checking ATS keyword coverage...")
             ats_result = run_ats_agent(resume_output, parsed_jd)
             progress.progress(100)
 
             st.session_state.result = {
                 "parsed_jd": parsed_jd,
                 "resume_output": resume_output,
-                "prep_output": prep_output,
+                "prep_output": None,
                 "eval_result": eval_result,
                 "visa_result": visa_result,
                 "ats_result": ats_result,
             }
             st.session_state.approved_resume = resume_output
-            st.session_state.approved_prep = prep_output
+            st.session_state.approved_prep = None
             st.session_state.stage = "review"
             status.success("Done! Reviewing your results...")
             st.rerun()
@@ -316,7 +310,7 @@ with tab_run:
                     st.rerun()
 
         with tab2:
-            prep = result["prep_output"]
+            prep = result.get("prep_output")
 
             CATEGORY_COLORS = {
                 "Behavioral":      ("#1d4ed8", "#dbeafe"),
@@ -335,48 +329,58 @@ with tab_run:
                         f'border-radius:12px;font-size:12px;font-weight:500;'
                         f'border:1px solid #cbd5e1">🏷 {topic}</span>')
 
-            st.markdown("### 📚 Preparation Topics")
-            for i, t in enumerate(prep.get("prep_topics", []), 1):
-                with st.expander(f"**{i}. {t['title']}**", expanded=False):
-                    st.markdown(f"**Why it matters:** {t['why_it_matters']}")
-                    st.markdown(f"**What to prepare:** {t['what_to_prepare']}")
-
-            st.divider()
-            st.markdown("### ❓ Interview Questions")
-
-            for cat in ["Behavioral", "Technical AI/ML", "Product Sense", "Situational"]:
-                cat_qs = [q for q in prep.get("questions", []) if q.get("category") == cat]
-                if not cat_qs:
-                    continue
-                fg, bg = CATEGORY_COLORS.get(cat, ("#374151", "#f3f4f6"))
-                st.markdown(
-                    f'<div style="background:{bg};color:{fg};padding:6px 14px;'
-                    f'border-radius:8px;font-weight:700;font-size:14px;'
-                    f'margin:20px 0 10px 0">{cat}</div>',
-                    unsafe_allow_html=True
-                )
-                for q in cat_qs:
-                    reported_tag = ' <span style="color:#dc2626;font-size:11px;font-weight:700">● REPORTED</span>' if q.get("reported") else ""
-                    with st.expander(q["question"], expanded=False):
-                        st.markdown(f'{category_badge(q["category"])} &nbsp; {topic_badge(q["topic"])}{reported_tag}', unsafe_allow_html=True)
-                        st.caption(f"💡 {q['hint']}")
-                        st.markdown("**Answer angles:**")
-                        for opt in q.get("answer_options", []):
-                            st.markdown(
-                                f'<div style="background:#f8faff;border-left:3px solid #3b82f6;'
-                                f'padding:10px 14px;border-radius:0 6px 6px 0;margin:6px 0">'
-                                f'<strong>{opt["angle"]}</strong><br>{opt["outline"]}</div>',
-                                unsafe_allow_html=True
-                            )
-
-            col1, _ = st.columns([1, 3])
-            with col1:
-                if st.button("🔄 Regenerate Prep"):
-                    with st.spinner("Searching web + regenerating prep guide..."):
+            if not prep:
+                st.markdown("### 🎯 Interview Prep Guide")
+                st.info("Interview prep is generated on demand — it searches the web for real questions and takes ~30 seconds.")
+                if st.button("🚀 Run Interview Prep", type="primary"):
+                    with st.spinner("Searching the web for real interview Qs + building prep guide (~30s)..."):
                         new_prep = run_prep_agent(st.session_state.jd_text, parsed_jd)
                         st.session_state.approved_prep = new_prep
                         st.session_state.result["prep_output"] = new_prep
                     st.rerun()
+            else:
+                st.markdown("### 📚 Preparation Topics")
+                for i, t in enumerate(prep.get("prep_topics", []), 1):
+                    with st.expander(f"**{i}. {t['title']}**", expanded=False):
+                        st.markdown(f"**Why it matters:** {t['why_it_matters']}")
+                        st.markdown(f"**What to prepare:** {t['what_to_prepare']}")
+
+                st.divider()
+                st.markdown("### ❓ Interview Questions")
+
+                for cat in ["Behavioral", "Technical AI/ML", "Product Sense", "Situational"]:
+                    cat_qs = [q for q in prep.get("questions", []) if q.get("category") == cat]
+                    if not cat_qs:
+                        continue
+                    fg, bg = CATEGORY_COLORS.get(cat, ("#374151", "#f3f4f6"))
+                    st.markdown(
+                        f'<div style="background:{bg};color:{fg};padding:6px 14px;'
+                        f'border-radius:8px;font-weight:700;font-size:14px;'
+                        f'margin:20px 0 10px 0">{cat}</div>',
+                        unsafe_allow_html=True
+                    )
+                    for q in cat_qs:
+                        reported_tag = ' <span style="color:#dc2626;font-size:11px;font-weight:700">● REPORTED</span>' if q.get("reported") else ""
+                        with st.expander(q["question"], expanded=False):
+                            st.markdown(f'{category_badge(q["category"])} &nbsp; {topic_badge(q["topic"])}{reported_tag}', unsafe_allow_html=True)
+                            st.caption(f"💡 {q['hint']}")
+                            st.markdown("**Answer angles:**")
+                            for opt in q.get("answer_options", []):
+                                st.markdown(
+                                    f'<div style="background:#f8faff;border-left:3px solid #3b82f6;'
+                                    f'padding:10px 14px;border-radius:0 6px 6px 0;margin:6px 0">'
+                                    f'<strong>{opt["angle"]}</strong><br>{opt["outline"]}</div>',
+                                    unsafe_allow_html=True
+                                )
+
+                col1, _ = st.columns([1, 3])
+                with col1:
+                    if st.button("🔄 Regenerate Prep"):
+                        with st.spinner("Searching web + regenerating prep guide..."):
+                            new_prep = run_prep_agent(st.session_state.jd_text, parsed_jd)
+                            st.session_state.approved_prep = new_prep
+                            st.session_state.result["prep_output"] = new_prep
+                        st.rerun()
 
         st.divider()
 
