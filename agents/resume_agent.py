@@ -12,6 +12,12 @@ RESUME_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 FORMAT_RULES = """
 OUTPUT FORMAT — FOLLOW EXACTLY, NO EXCEPTIONS:
 
+[Full name]
+[Phone] | [Email] | [LinkedIn] | [Location]
+
+SUMMARY
+[2-3 sentence summary tailored to the JD — use only facts from the source resume]
+
 SKILLS
 AI/ML & Data: [comma-separated skills]
 Product: [comma-separated skills]
@@ -24,14 +30,20 @@ EXPERIENCE
 - [Bullet]
 - [Bullet]
 
-[Next company, same pattern]
+[Next company, same pattern — keep ALL companies from source resume]
+
+EDUCATION
+[Degree] — [University] ([GPA if present]) | [Year]
+[Degree] — [University] | [Year]
 
 Rules:
 - Section headers in ALL CAPS with no extra punctuation
+- Name on its own line, contact info on the next line (no labels)
 - Job title lines: Company | Title | Location | Dates (pipe-separated, no bold markers)
 - Every bullet starts with "- "
-- No sub-headers, no summaries, no education section, no extra blank lines between bullets
-- Keep every company and role present in the source resume — do not drop any
+- No extra blank lines between bullets within a role
+- Do not drop any company or role from the source resume
+- Copy name, contact, and education exactly from the source — do not alter them
 """
 
 
@@ -90,7 +102,7 @@ JOB DESCRIPTION:
 SOURCE RESUME:
 {source}
 
-Output only the resume. No commentary, no preamble."""
+Output only the resume. No commentary, no preamble, no markdown code blocks."""
 
     message = client.messages.create(
         model="claude-sonnet-4-6",
