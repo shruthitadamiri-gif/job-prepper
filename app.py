@@ -324,7 +324,8 @@ with tab_run:
                     with st.spinner(f"Regenerating resume — targeting {len(missing)} missing keyword(s)..."):
                         new_resume = run_resume_agent(
                             st.session_state.jd_text, parsed_jd,
-                            missing_keywords=missing
+                            missing_keywords=missing,
+                            current_resume=st.session_state.approved_resume,
                         )
                         st.session_state.approved_resume = new_resume
                         st.session_state.result["resume_output"] = new_resume
