@@ -1,5 +1,6 @@
 import os
 import sys
+import hashlib
 import chromadb
 from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
@@ -8,16 +9,45 @@ load_dotenv()
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CHROMA_PATH = os.path.join(PROJECT_ROOT, "chroma_db")
+RESUME_PATH = os.path.join(PROJECT_ROOT, "resume.txt")
+HASH_PATH = os.path.join(PROJECT_ROOT, "chroma_db", "resume_hash.txt")
+
+
+def _resume_hash() -> str:
+    with open(RESUME_PATH, "rb") as f:
+        return hashlib.md5(f.read()).hexdigest()
+
+
+def _stored_hash() -> str:
+    try:
+        with open(HASH_PATH) as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return ""
+
+
+def _save_hash(h: str) -> None:
+    os.makedirs(CHROMA_PATH, exist_ok=True)
+    with open(HASH_PATH, "w") as f:
+        f.write(h)
 
 
 def _get_or_build_collection(client):
-    try:
-        return client.get_collection("resume")
-    except Exception:
+    current_hash = _resume_hash()
+    needs_rebuild = _stored_hash() != current_hash
+
+    if not needs_rebuild:
+        try:
+            return client.get_collection("resume")
+        except Exception:
+            needs_rebuild = True
+
+    if needs_rebuild:
         sys.path.insert(0, PROJECT_ROOT)
         from resume_store import build_resume_store
-        print("Resume collection not found — rebuilding from resume.txt...")
+        print("resume.txt changed or collection missing — rebuilding ChromaDB...")
         build_resume_store()
+        _save_hash(current_hash)
         return client.get_collection("resume")
 
 
