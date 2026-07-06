@@ -14,6 +14,9 @@ from tools.docx_export import resume_to_docx
 from tools.jd_fetcher import fetch_jd_from_url
 from tools.visa_check import check_visa_sponsorship
 from tools.history_store import save_entry, load_history, set_applied, delete_entry
+from agents.title_discovery_agent import discover_titles
+from tools.job_search import search_all_titles
+from tools.job_ranker import rank_jobs
 from graph import build_graph
 
 # ---------------------------------------------------------------
@@ -50,7 +53,7 @@ st.title("🎯 Job Prepper")
 st.caption("Paste a job description and get a tailored resume + interview prep — powered by an agentic AI system")
 st.divider()
 
-tab_run, tab_history = st.tabs(["🎯 Run Job Prepper", "📋 Application History"])
+tab_run, tab_history, tab_search = st.tabs(["🎯 Run Job Prepper", "📋 Application History", "🔍 Job Search"])
 
 # ===============================================================
 # TAB 1 — MAIN WORKFLOW
@@ -517,3 +520,115 @@ with tab_history:
                         st.rerun()
 
             st.markdown("</div>", unsafe_allow_html=True)
+
+# ===============================================================
+# TAB 3 — JOB SEARCH
+# ===============================================================
+with tab_search:
+
+    st.subheader("🔍 Job Search")
+    st.caption("Discovers job titles matched to your resume — both direct fits and adjacent roles worth exploring.")
+
+    has_jsearch = bool(os.getenv("JSEARCH_API_KEY", "").strip())
+    if not has_jsearch:
+        st.warning("Add `JSEARCH_API_KEY` to your Streamlit secrets to enable job search.")
+
+    # --- Controls ---
+    col_loc, col_days, col_btn = st.columns([2, 1, 1])
+    with col_loc:
+        location = st.text_input("Location", value="United States", label_visibility="collapsed",
+                                  placeholder="Location (e.g. New York, Remote)")
+    with col_days:
+        days_back = st.selectbox("Posted within", [7, 14, 30], index=2,
+                                  format_func=lambda d: f"Last {d} days")
+    with col_btn:
+        search_btn = st.button("🔍 Search Jobs", type="primary", use_container_width=True,
+                                disabled=not has_jsearch)
+
+    if search_btn:
+        with st.spinner("Discovering titles from your resume..."):
+            titles_data = discover_titles()
+        st.session_state.job_titles = titles_data
+
+        all_titles = (
+            [t["title"] for t in titles_data["direct_fit"]] +
+            [t["title"] for t in titles_data["worth_exploring"]]
+        )
+
+        with st.spinner(f"Searching {len(all_titles)} job titles on JSearch..."):
+            raw_results = search_all_titles(all_titles, location=location, days_back=days_back)
+
+        # Rank all jobs together
+        all_jobs_flat = []
+        for title, jobs in raw_results.items():
+            for job in jobs:
+                job["searched_title"] = title
+            all_jobs_flat.extend(jobs)
+
+        with st.spinner("Ranking results by resume match..."):
+            ranked = rank_jobs(all_jobs_flat)
+
+        st.session_state.job_results = ranked
+        st.session_state.job_titles_meta = titles_data
+        st.rerun()
+
+    # --- Results ---
+    if "job_results" in st.session_state and st.session_state.job_results is not None:
+        titles_meta = st.session_state.get("job_titles_meta", {})
+        results = st.session_state.job_results
+
+        # Title groups
+        col_direct, col_explore = st.columns(2)
+        with col_direct:
+            st.markdown("**Direct fit titles searched:**")
+            for t in titles_meta.get("direct_fit", []):
+                st.markdown(
+                    f'<span style="background:#dbeafe;color:#1d4ed8;padding:2px 10px;'
+                    f'border-radius:10px;font-size:12px;font-weight:600;margin:2px;display:inline-block">'
+                    f'{t["title"]}</span>',
+                    unsafe_allow_html=True
+                )
+                st.caption(t["rationale"])
+        with col_explore:
+            st.markdown("**Worth exploring:**")
+            for t in titles_meta.get("worth_exploring", []):
+                st.markdown(
+                    f'<span style="background:#ede9fe;color:#6d28d9;padding:2px 10px;'
+                    f'border-radius:10px;font-size:12px;font-weight:600;margin:2px;display:inline-block">'
+                    f'{t["title"]}</span>',
+                    unsafe_allow_html=True
+                )
+                st.caption(t["rationale"])
+
+        st.divider()
+        st.markdown(f"### {len(results)} jobs found — sorted by resume match")
+
+        if not results:
+            st.info("No jobs found for the selected titles and date range. Try expanding the date range or changing the location.")
+        else:
+            for job in results:
+                score = job["relevance_score"]
+                score_color = "#059669" if score >= 70 else "#d97706" if score >= 50 else "#94a3b8"
+                remote_badge = ' <span style="background:#d1fae5;color:#065f46;padding:1px 7px;border-radius:8px;font-size:11px">Remote</span>' if job.get("is_remote") else ""
+
+                with st.container():
+                    st.markdown(
+                        f'<div style="border:1px solid #e2e8f0;border-radius:10px;padding:14px 18px;margin-bottom:10px;background:#fafbff">'
+                        f'<div style="display:flex;justify-content:space-between;align-items:flex-start">'
+                        f'<div>'
+                        f'<strong style="font-size:15px">{job["title"]}</strong>{remote_badge}<br>'
+                        f'<span style="color:#475569">{job["company"]}</span> &nbsp;·&nbsp; '
+                        f'<span style="color:#94a3b8;font-size:13px">📍 {job["location"] or "Not specified"}</span> &nbsp;·&nbsp; '
+                        f'<span style="color:#94a3b8;font-size:13px">📅 {job["date_posted"]}</span>'
+                        f'</div>'
+                        f'<div style="text-align:right;min-width:70px">'
+                        f'<span style="font-size:18px;font-weight:700;color:{score_color}">{score}%</span><br>'
+                        f'<span style="font-size:10px;color:#94a3b8">match</span>'
+                        f'</div></div>',
+                        unsafe_allow_html=True
+                    )
+                    if job.get("description_snippet"):
+                        st.caption(job["description_snippet"][:250] + "...")
+                    if job.get("url"):
+                        st.markdown(f"[View & Apply →]({job['url']})")
+                    st.markdown("</div>", unsafe_allow_html=True)
