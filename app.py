@@ -527,109 +527,129 @@ with tab_history:
 with tab_search:
 
     st.subheader("🔍 Job Search")
-    st.caption("Discovers job titles matched to your resume — both direct fits and adjacent roles worth exploring.")
+    st.caption("AI discovers job titles from your resume and searches Google Jobs (LinkedIn, Indeed, and more).")
 
     has_serpapi = bool(os.getenv("SERPAPI_KEY", "").strip())
     if not has_serpapi:
         st.warning("Add `SERPAPI_KEY` to your Streamlit secrets to enable job search.")
 
-    # --- Controls ---
-    col_loc, col_days, col_btn = st.columns([2, 1, 1])
-    with col_loc:
-        location = st.text_input("Location", value="United States", label_visibility="collapsed",
-                                  placeholder="Location (e.g. New York, Remote)")
-    with col_days:
+    # --- Compact controls row ---
+    st.markdown('<div style="display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap">', unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
+    with c1:
+        st.caption("📍 Location")
+        location = st.text_input("Location", value="Boston, MA", label_visibility="collapsed",
+                                  placeholder="e.g. Boston, MA or Remote")
+    with c2:
+        st.caption("📅 Posted within")
         days_back = st.selectbox("Posted within", [7, 14, 30], index=2,
-                                  format_func=lambda d: f"Last {d} days")
-    with col_btn:
-        search_btn = st.button("🔍 Search Jobs", type="primary", use_container_width=True,
+                                  format_func=lambda d: f"{d} days",
+                                  label_visibility="collapsed")
+    with c3:
+        st.caption("🔗 Source filter")
+        source_filter = st.selectbox("Source", ["All sources", "LinkedIn", "Indeed"],
+                                      label_visibility="collapsed")
+    with c4:
+        st.caption("&nbsp;", unsafe_allow_html=True)
+        search_btn = st.button("🔍 Search", type="primary", use_container_width=True,
                                 disabled=not has_serpapi)
+    st.markdown('</div>', unsafe_allow_html=True)
 
     if search_btn:
         with st.spinner("Discovering titles from your resume..."):
             titles_data = discover_titles()
-        st.session_state.job_titles = titles_data
 
         all_titles = (
             [t["title"] for t in titles_data["direct_fit"]] +
             [t["title"] for t in titles_data["worth_exploring"]]
         )
 
-        with st.spinner(f"Searching {len(all_titles)} job titles on Google Jobs (LinkedIn, Indeed + more)..."):
+        with st.spinner(f"Searching {len(all_titles)} titles on Google Jobs..."):
             raw_results = search_all_titles(all_titles, location=location, days_back=days_back)
 
-        # Rank all jobs together
         all_jobs_flat = []
         for title, jobs in raw_results.items():
             for job in jobs:
                 job["searched_title"] = title
             all_jobs_flat.extend(jobs)
 
-        with st.spinner("Ranking results by resume match..."):
+        with st.spinner("Ranking by resume match..."):
             ranked = rank_jobs(all_jobs_flat)
 
         st.session_state.job_results = ranked
         st.session_state.job_titles_meta = titles_data
+        st.session_state.job_source_filter = source_filter
         st.rerun()
 
     # --- Results ---
     if "job_results" in st.session_state and st.session_state.job_results is not None:
         titles_meta = st.session_state.get("job_titles_meta", {})
-        results = st.session_state.job_results
+        all_results = st.session_state.job_results
+        active_filter = st.session_state.get("job_source_filter", "All sources")
 
-        # Title groups
-        col_direct, col_explore = st.columns(2)
-        with col_direct:
-            st.markdown("**Direct fit titles searched:**")
-            for t in titles_meta.get("direct_fit", []):
-                st.markdown(
-                    f'<span style="background:#dbeafe;color:#1d4ed8;padding:2px 10px;'
-                    f'border-radius:10px;font-size:12px;font-weight:600;margin:2px;display:inline-block">'
-                    f'{t["title"]}</span>',
-                    unsafe_allow_html=True
-                )
-                st.caption(t["rationale"])
-        with col_explore:
-            st.markdown("**Worth exploring:**")
-            for t in titles_meta.get("worth_exploring", []):
-                st.markdown(
-                    f'<span style="background:#ede9fe;color:#6d28d9;padding:2px 10px;'
-                    f'border-radius:10px;font-size:12px;font-weight:600;margin:2px;display:inline-block">'
-                    f'{t["title"]}</span>',
-                    unsafe_allow_html=True
-                )
-                st.caption(t["rationale"])
+        # Apply source filter
+        if active_filter != "All sources":
+            results = [j for j in all_results if active_filter.lower() in j.get("via", "").lower()]
+        else:
+            results = all_results
 
         st.divider()
-        st.markdown(f"### {len(results)} jobs found — sorted by resume match")
+        st.markdown(f"**{len(results)} jobs found** — sorted by resume match score")
 
         if not results:
-            st.info("No jobs found for the selected titles and date range. Try expanding the date range or changing the location.")
+            st.info("No jobs found. Try expanding the date range, changing the location, or switching the source filter to 'All sources'.")
         else:
             for job in results:
                 score = job["relevance_score"]
                 score_color = "#059669" if score >= 70 else "#d97706" if score >= 50 else "#94a3b8"
                 remote_badge = ' <span style="background:#d1fae5;color:#065f46;padding:1px 7px;border-radius:8px;font-size:11px">Remote</span>' if job.get("is_remote") else ""
+                via_badge = f' <span style="background:#ede9fe;color:#6d28d9;padding:1px 7px;border-radius:8px;font-size:11px">{job["via"]}</span>' if job.get("via") else ""
 
                 with st.container():
                     st.markdown(
                         f'<div style="border:1px solid #e2e8f0;border-radius:10px;padding:14px 18px;margin-bottom:10px;background:#fafbff">'
                         f'<div style="display:flex;justify-content:space-between;align-items:flex-start">'
-                        f'<div>'
-                        f'<strong style="font-size:15px">{job["title"]}</strong>{remote_badge}<br>'
-                        f'<span style="color:#475569">{job["company"]}</span> &nbsp;·&nbsp; '
-                        f'<span style="color:#94a3b8;font-size:13px">📍 {job["location"] or "Not specified"}</span> &nbsp;·&nbsp; '
+                        f'<div style="flex:1">'
+                        f'<strong style="font-size:15px">{job["title"]}</strong>{remote_badge}{via_badge}<br>'
+                        f'<span style="color:#475569">{job["company"]}</span>'
+                        f'<span style="color:#cbd5e1"> &nbsp;·&nbsp; </span>'
+                        f'<span style="color:#94a3b8;font-size:13px">📍 {job["location"] or "Not specified"}</span>'
+                        f'<span style="color:#cbd5e1"> &nbsp;·&nbsp; </span>'
                         f'<span style="color:#94a3b8;font-size:13px">📅 {job["date_posted"]}</span>'
-                        f'{(" &nbsp;·&nbsp; <span style=\"color:#6d28d9;font-size:12px;font-weight:500\">" + job["via"] + "</span>") if job.get("via") else ""}'
                         f'</div>'
-                        f'<div style="text-align:right;min-width:70px">'
+                        f'<div style="text-align:right;min-width:60px;padding-left:12px">'
                         f'<span style="font-size:18px;font-weight:700;color:{score_color}">{score}%</span><br>'
                         f'<span style="font-size:10px;color:#94a3b8">match</span>'
                         f'</div></div>',
                         unsafe_allow_html=True
                     )
                     if job.get("description_snippet"):
-                        st.caption(job["description_snippet"][:250] + "...")
+                        st.caption(job["description_snippet"][:220] + "...")
                     if job.get("url"):
                         st.markdown(f"[View & Apply →]({job['url']})")
                     st.markdown("</div>", unsafe_allow_html=True)
+
+        # --- Titles used (moved to bottom) ---
+        st.divider()
+        with st.expander("🔎 Titles searched by AI", expanded=False):
+            col_direct, col_explore = st.columns(2)
+            with col_direct:
+                st.markdown("**Direct fit**")
+                for t in titles_meta.get("direct_fit", []):
+                    st.markdown(
+                        f'<span style="background:#dbeafe;color:#1d4ed8;padding:2px 10px;'
+                        f'border-radius:10px;font-size:12px;font-weight:600;margin:2px;display:inline-block">'
+                        f'{t["title"]}</span>',
+                        unsafe_allow_html=True
+                    )
+                    st.caption(t["rationale"])
+            with col_explore:
+                st.markdown("**Worth exploring**")
+                for t in titles_meta.get("worth_exploring", []):
+                    st.markdown(
+                        f'<span style="background:#ede9fe;color:#6d28d9;padding:2px 10px;'
+                        f'border-radius:10px;font-size:12px;font-weight:600;margin:2px;display:inline-block">'
+                        f'{t["title"]}</span>',
+                        unsafe_allow_html=True
+                    )
+                    st.caption(t["rationale"])
