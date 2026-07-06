@@ -16,7 +16,7 @@ from tools.visa_check import check_visa_sponsorship
 from tools.history_store import save_entry, load_history, set_applied, delete_entry
 from agents.title_discovery_agent import discover_titles
 from tools.job_search import search_all_titles
-from tools.job_ranker import rank_jobs
+from tools.batch_runner import run_batch, run_prep_for_result
 from graph import build_graph
 
 # ---------------------------------------------------------------
@@ -527,44 +527,40 @@ with tab_history:
 with tab_search:
 
     st.subheader("🔍 Job Search")
-    st.caption("AI discovers job titles from your resume and searches Google Jobs (LinkedIn, Indeed, and more).")
 
     has_serpapi = bool(os.getenv("SERPAPI_KEY", "").strip())
     if not has_serpapi:
         st.warning("Add `SERPAPI_KEY` to your Streamlit secrets to enable job search.")
 
-    # --- Compact controls row ---
-    st.markdown('<div style="display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap">', unsafe_allow_html=True)
+    # ── STEP 1: Search controls ──────────────────────────────────
+    st.markdown("#### Step 1 — Search for roles")
     c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
     with c1:
         st.caption("📍 Location")
-        location = st.text_input("Location", value="Boston, MA", label_visibility="collapsed",
+        location = st.text_input("loc", value="Boston, MA", label_visibility="collapsed",
                                   placeholder="e.g. Boston, MA or Remote")
     with c2:
         st.caption("📅 Posted within")
-        days_back = st.selectbox("Posted within", [7, 14, 30], index=2,
+        days_back = st.selectbox("days", [7, 14, 30], index=2,
                                   format_func=lambda d: f"{d} days",
                                   label_visibility="collapsed")
     with c3:
-        st.caption("🔗 Source filter")
-        source_filter = st.selectbox("Source", ["All sources", "LinkedIn", "Indeed"],
+        st.caption("🔗 Source")
+        source_filter = st.selectbox("src", ["All", "LinkedIn", "Indeed"],
                                       label_visibility="collapsed")
     with c4:
-        st.caption("&nbsp;", unsafe_allow_html=True)
+        st.caption(" ")
         search_btn = st.button("🔍 Search", type="primary", use_container_width=True,
                                 disabled=not has_serpapi)
-    st.markdown('</div>', unsafe_allow_html=True)
 
     if search_btn:
         with st.spinner("Discovering titles from your resume..."):
             titles_data = discover_titles()
-
         all_titles = (
             [t["title"] for t in titles_data["direct_fit"]] +
             [t["title"] for t in titles_data["worth_exploring"]]
         )
-
-        with st.spinner(f"Searching {len(all_titles)} titles on Google Jobs..."):
+        with st.spinner(f"Searching {len(all_titles)} titles on Google Jobs (LinkedIn, Indeed + more)..."):
             raw_results = search_all_titles(all_titles, location=location, days_back=days_back)
 
         all_jobs_flat = []
@@ -573,83 +569,178 @@ with tab_search:
                 job["searched_title"] = title
             all_jobs_flat.extend(jobs)
 
-        with st.spinner("Ranking by resume match..."):
-            ranked = rank_jobs(all_jobs_flat)
-
-        st.session_state.job_results = ranked
-        st.session_state.job_titles_meta = titles_data
-        st.session_state.job_source_filter = source_filter
+        st.session_state.js_jobs = all_jobs_flat
+        st.session_state.js_titles_meta = titles_data
+        st.session_state.js_source_filter = source_filter
+        st.session_state.js_selected = set()
+        st.session_state.js_batch_results = None
         st.rerun()
 
-    # --- Results ---
-    if "job_results" in st.session_state and st.session_state.job_results is not None:
-        titles_meta = st.session_state.get("job_titles_meta", {})
-        all_results = st.session_state.job_results
-        active_filter = st.session_state.get("job_source_filter", "All sources")
-
-        # Apply source filter
-        if active_filter != "All sources":
-            results = [j for j in all_results if active_filter.lower() in j.get("via", "").lower()]
-        else:
-            results = all_results
+    # ── STEP 2: Job cards with checkboxes ────────────────────────
+    if st.session_state.get("js_jobs") is not None:
+        all_jobs = st.session_state.js_jobs
+        active_filter = st.session_state.get("js_source_filter", "All")
+        jobs = [j for j in all_jobs if active_filter == "All" or active_filter.lower() in j.get("via", "").lower()]
 
         st.divider()
-        st.markdown(f"**{len(results)} jobs found** — sorted by resume match score")
+        st.markdown(f"#### Step 2 — Select roles to run Job Prepper on")
+        st.caption(f"{len(jobs)} jobs found — check the ones you want to analyse")
 
-        if not results:
-            st.info("No jobs found. Try expanding the date range, changing the location, or switching the source filter to 'All sources'.")
+        if not jobs:
+            st.info("No jobs found. Try a wider date range or 'All' sources.")
         else:
-            for job in results:
-                score = job["relevance_score"]
-                score_color = "#059669" if score >= 70 else "#d97706" if score >= 50 else "#94a3b8"
-                remote_badge = ' <span style="background:#d1fae5;color:#065f46;padding:1px 7px;border-radius:8px;font-size:11px">Remote</span>' if job.get("is_remote") else ""
-                via_badge = f' <span style="background:#ede9fe;color:#6d28d9;padding:1px 7px;border-radius:8px;font-size:11px">{job["via"]}</span>' if job.get("via") else ""
+            selected = st.session_state.get("js_selected", set())
 
-                with st.container():
+            for i, job in enumerate(jobs):
+                remote_badge = "🌐 Remote &nbsp;" if job.get("is_remote") else ""
+                via = f' <span style="background:#ede9fe;color:#6d28d9;padding:1px 7px;border-radius:8px;font-size:11px">{job["via"]}</span>' if job.get("via") else ""
+
+                col_chk, col_info = st.columns([0.5, 9])
+                with col_chk:
+                    checked = st.checkbox("", key=f"sel_{i}", value=(i in selected))
+                    if checked:
+                        selected.add(i)
+                    else:
+                        selected.discard(i)
+                with col_info:
                     st.markdown(
-                        f'<div style="border:1px solid #e2e8f0;border-radius:10px;padding:14px 18px;margin-bottom:10px;background:#fafbff">'
-                        f'<div style="display:flex;justify-content:space-between;align-items:flex-start">'
-                        f'<div style="flex:1">'
-                        f'<strong style="font-size:15px">{job["title"]}</strong>{remote_badge}{via_badge}<br>'
-                        f'<span style="color:#475569">{job["company"]}</span>'
-                        f'<span style="color:#cbd5e1"> &nbsp;·&nbsp; </span>'
-                        f'<span style="color:#94a3b8;font-size:13px">📍 {job["location"] or "Not specified"}</span>'
-                        f'<span style="color:#cbd5e1"> &nbsp;·&nbsp; </span>'
-                        f'<span style="color:#94a3b8;font-size:13px">📅 {job["date_posted"]}</span>'
-                        f'</div>'
-                        f'<div style="text-align:right;min-width:60px;padding-left:12px">'
-                        f'<span style="font-size:18px;font-weight:700;color:{score_color}">{score}%</span><br>'
-                        f'<span style="font-size:10px;color:#94a3b8">match</span>'
-                        f'</div></div>',
+                        f'<div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;background:#fafbff;margin-bottom:4px">'
+                        f'<strong>{job["title"]}</strong>{via}<br>'
+                        f'<span style="color:#475569;font-size:13px">{job["company"]}</span>'
+                        f' <span style="color:#cbd5e1">·</span> '
+                        f'<span style="color:#94a3b8;font-size:12px">{remote_badge}📍{job["location"] or "—"} &nbsp;·&nbsp; 📅{job["date_posted"]}</span>'
+                        f'</div>',
                         unsafe_allow_html=True
                     )
                     if job.get("description_snippet"):
-                        st.caption(job["description_snippet"][:220] + "...")
+                        with st.expander("Preview description", expanded=False):
+                            st.caption(job["description_snippet"])
                     if job.get("url"):
-                        st.markdown(f"[View & Apply →]({job['url']})")
-                    st.markdown("</div>", unsafe_allow_html=True)
+                        st.markdown(f'<a href="{job["url"]}" target="_blank" style="font-size:12px">View posting →</a>', unsafe_allow_html=True)
 
-        # --- Titles used (moved to bottom) ---
+            st.session_state.js_selected = selected
+
+            if selected:
+                st.divider()
+                run_batch_btn = st.button(
+                    f"⚡ Run Job Prepper for {len(selected)} selected role{'s' if len(selected) > 1 else ''}",
+                    type="primary"
+                )
+                if run_batch_btn:
+                    selected_jobs = [jobs[i] for i in sorted(selected)]
+                    with st.spinner(f"Running Job Prepper in parallel for {len(selected_jobs)} role(s) — takes ~45 seconds..."):
+                        batch_results = run_batch(selected_jobs)
+                    # Auto-save each to history
+                    for r in batch_results:
+                        if "error" not in r:
+                            try:
+                                save_entry(r["parsed_jd"], r["eval_result"], r["resume_output"], r["jd_text"])
+                            except Exception:
+                                pass
+                    st.session_state.js_batch_results = batch_results
+                    st.rerun()
+
+    # ── STEP 3: Batch results + interview prep selection ─────────
+    if st.session_state.get("js_batch_results"):
+        batch_results = st.session_state.js_batch_results
+
         st.divider()
+        st.markdown("#### Step 3 — Results")
+        st.caption("Scores are based on your tailored resume vs each role. Select roles for interview prep below.")
+
+        prep_selected = set()
+
+        for i, r in enumerate(batch_results):
+            job = r["job"]
+
+            if "error" in r:
+                st.error(f"**{job['title']} at {job['company']}** — failed: {r['error']}")
+                continue
+
+            ats = r["ats_result"]
+            ev = r["eval_result"]
+            ats_pct = ats["coverage_percent"]
+            rel_score = ev["overall_score"]
+            ats_color = "#059669" if ats_pct >= 70 else "#d97706" if ats_pct >= 50 else "#dc2626"
+            rel_color = "#059669" if rel_score >= 7 else "#d97706" if rel_score >= 5 else "#dc2626"
+
+            col_info, col_ats, col_rel, col_prep = st.columns([4, 1, 1, 1])
+            with col_info:
+                st.markdown(f"**{job['title']}**")
+                st.caption(f"{job['company']} &nbsp;·&nbsp; {job.get('location','')}")
+            with col_ats:
+                st.markdown(f'<div style="text-align:center"><span style="font-size:20px;font-weight:700;color:{ats_color}">{ats_pct}%</span><br><span style="font-size:11px;color:#94a3b8">ATS</span></div>', unsafe_allow_html=True)
+            with col_rel:
+                st.markdown(f'<div style="text-align:center"><span style="font-size:20px;font-weight:700;color:{rel_color}">{rel_score}/10</span><br><span style="font-size:11px;color:#94a3b8">relevance</span></div>', unsafe_allow_html=True)
+            with col_prep:
+                want_prep = st.checkbox("Add prep", key=f"prep_{i}")
+                if want_prep:
+                    prep_selected.add(i)
+
+            with st.expander("📄 View tailored resume & download", expanded=False):
+                st.text_area("Resume", value=r["resume_output"], height=250,
+                             disabled=True, key=f"br_resume_{i}", label_visibility="collapsed")
+                dl1, dl2 = st.columns(2)
+                fname = f"resume_{job['company'].lower().replace(' ','_')}.docx"
+                with dl1:
+                    st.download_button("📥 .txt", data=r["resume_output"],
+                                       file_name=fname.replace(".docx", ".txt"),
+                                       mime="text/plain", key=f"br_txt_{i}",
+                                       use_container_width=True)
+                with dl2:
+                    st.download_button("📥 .docx", data=resume_to_docx(r["resume_output"]),
+                                       file_name=fname, mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                       key=f"br_docx_{i}", use_container_width=True)
+            st.divider()
+
+        # ── STEP 4: Interview prep ────────────────────────────────
+        if prep_selected:
+            st.markdown("#### Step 4 — Interview Prep")
+            run_prep_btn = st.button(
+                f"🎯 Run Interview Prep for {len(prep_selected)} selected role{'s' if len(prep_selected) > 1 else ''}",
+                type="primary"
+            )
+            if run_prep_btn:
+                for idx in sorted(prep_selected):
+                    r = batch_results[idx]
+                    with st.spinner(f"Building prep guide for {r['job']['title']} at {r['job']['company']}..."):
+                        updated = run_prep_for_result(r)
+                        st.session_state.js_batch_results[idx] = updated
+                st.rerun()
+
+        # Show any prep that's already been generated
+        for i, r in enumerate(batch_results):
+            if r.get("prep_output"):
+                job = r["job"]
+                st.markdown(f"### 🎯 Interview Prep — {job['title']} at {job['company']}")
+                prep = r["prep_output"]
+                for t in prep.get("prep_topics", []):
+                    with st.expander(f"**{t['title']}**", expanded=False):
+                        st.markdown(f"**Why it matters:** {t['why_it_matters']}")
+                        st.markdown(f"**What to prepare:** {t['what_to_prepare']}")
+                for q in prep.get("questions", []):
+                    with st.expander(q["question"], expanded=False):
+                        st.caption(f"💡 {q['hint']}")
+                        for opt in q.get("answer_options", []):
+                            st.markdown(
+                                f'<div style="background:#f8faff;border-left:3px solid #3b82f6;'
+                                f'padding:10px 14px;border-radius:0 6px 6px 0;margin:6px 0">'
+                                f'<strong>{opt["angle"]}</strong><br>{opt["outline"]}</div>',
+                                unsafe_allow_html=True
+                            )
+                st.divider()
+
+        # ── Titles used ───────────────────────────────────────────
         with st.expander("🔎 Titles searched by AI", expanded=False):
-            col_direct, col_explore = st.columns(2)
-            with col_direct:
+            titles_meta = st.session_state.get("js_titles_meta", {})
+            cd, ce = st.columns(2)
+            with cd:
                 st.markdown("**Direct fit**")
                 for t in titles_meta.get("direct_fit", []):
-                    st.markdown(
-                        f'<span style="background:#dbeafe;color:#1d4ed8;padding:2px 10px;'
-                        f'border-radius:10px;font-size:12px;font-weight:600;margin:2px;display:inline-block">'
-                        f'{t["title"]}</span>',
-                        unsafe_allow_html=True
-                    )
+                    st.markdown(f'<span style="background:#dbeafe;color:#1d4ed8;padding:2px 10px;border-radius:10px;font-size:12px;font-weight:600;margin:2px;display:inline-block">{t["title"]}</span>', unsafe_allow_html=True)
                     st.caption(t["rationale"])
-            with col_explore:
+            with ce:
                 st.markdown("**Worth exploring**")
                 for t in titles_meta.get("worth_exploring", []):
-                    st.markdown(
-                        f'<span style="background:#ede9fe;color:#6d28d9;padding:2px 10px;'
-                        f'border-radius:10px;font-size:12px;font-weight:600;margin:2px;display:inline-block">'
-                        f'{t["title"]}</span>',
-                        unsafe_allow_html=True
-                    )
+                    st.markdown(f'<span style="background:#ede9fe;color:#6d28d9;padding:2px 10px;border-radius:10px;font-size:12px;font-weight:600;margin:2px;display:inline-block">{t["title"]}</span>', unsafe_allow_html=True)
                     st.caption(t["rationale"])
