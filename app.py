@@ -719,9 +719,15 @@ if page == "search":
                     else:
                         selected.discard(i)
                 with col_info:
+                    title_html = (
+                        f'<a href="{job["url"]}" target="_blank" style="font-size:15px;font-weight:700;color:#1e293b;text-decoration:none">'
+                        f'{job["title"]} ↗</a>'
+                        if job.get("url") else
+                        f'<strong style="font-size:15px">{job["title"]}</strong>'
+                    )
                     st.markdown(
                         f'<div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;background:#fafbff;margin-bottom:4px">'
-                        f'<strong>{job["title"]}</strong>{via}<br>'
+                        f'{title_html}{via}<br>'
                         f'<span style="color:#475569;font-size:13px">{job["company"]}</span>'
                         f' <span style="color:#cbd5e1">·</span> '
                         f'<span style="color:#94a3b8;font-size:12px">{remote_badge}📍{job["location"] or "—"} &nbsp;·&nbsp; 📅{job["date_posted"]}</span>'
@@ -731,8 +737,6 @@ if page == "search":
                     if job.get("description_snippet"):
                         with st.expander("Preview description", expanded=False):
                             st.caption(job["description_snippet"])
-                    if job.get("url"):
-                        st.markdown(f'<a href="{job["url"]}" target="_blank" style="font-size:12px">View posting →</a>', unsafe_allow_html=True)
 
             st.session_state.js_selected = selected
 
