@@ -41,29 +41,145 @@ st.markdown("""
 for key, default in [
     ("stage", "input"), ("result", None),
     ("approved_resume", None), ("approved_prep", None),
-    ("history_saved", False),
+    ("history_saved", False), ("page", "search"),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
 
 # ---------------------------------------------------------------
-# HEADER
+# HEADER + NAV
 # ---------------------------------------------------------------
 st.title("🎯 Job Prepper")
-st.caption("Paste a job description and get a tailored resume + interview prep — powered by an agentic AI system")
+st.caption("Find roles, tailor your resume, and prep for interviews — powered by an agentic AI system")
+
+nav_cols = st.columns([1, 1, 1, 4])
+pages = [("🔍 Job Search", "search"), ("🎯 Run Job Prepper", "run"), ("📋 History", "history")]
+for col, (label, key) in zip(nav_cols, pages):
+    with col:
+        active = st.session_state.page == key
+        if st.button(label, use_container_width=True,
+                     type="primary" if active else "secondary"):
+            st.session_state.page = key
+            st.rerun()
+
 st.divider()
-
-tab_run, tab_history, tab_search = st.tabs(["🎯 Run Job Prepper", "📋 Application History", "🔍 Job Search"])
+page = st.session_state.page
 
 # ===============================================================
-# TAB 1 — MAIN WORKFLOW
+# PAGE: RUN JOB PREPPER
 # ===============================================================
-with tab_run:
+if page == "run":
 
     # -----------------------------------------------------------
-    # STAGE 1: INPUT
+    # BATCH MODE: jobs passed from job search
     # -----------------------------------------------------------
-    if st.session_state.stage == "input":
+    if st.session_state.get("js_pending_jobs"):
+        pending = st.session_state.js_pending_jobs
+        st.subheader(f"Running Job Prepper for {len(pending)} selected role{'s' if len(pending) > 1 else ''}...")
+        st.caption("Running in parallel — takes about 45 seconds.")
+
+        with st.spinner("Tailoring resumes + scoring ATS in parallel..."):
+            batch_results = run_batch(pending)
+
+        for r in batch_results:
+            if "error" not in r:
+                try:
+                    save_entry(r["parsed_jd"], r["eval_result"], r["resume_output"], r["jd_text"])
+                except Exception:
+                    pass
+
+        st.session_state.js_batch_results = batch_results
+        st.session_state.js_pending_jobs = None
+        st.rerun()
+
+    # -----------------------------------------------------------
+    # BATCH RESULTS VIEW
+    # -----------------------------------------------------------
+    if st.session_state.get("js_batch_results"):
+        batch_results = st.session_state.js_batch_results
+        st.subheader("Job Prepper Results")
+        st.caption("Scores from your tailored resume vs each role. Select roles for interview prep.")
+
+        prep_selected = set()
+
+        for i, r in enumerate(batch_results):
+            job = r["job"]
+            if "error" in r:
+                st.error(f"**{job['title']} at {job['company']}** — failed: {r['error']}")
+                continue
+
+            ats = r["ats_result"]
+            ev = r["eval_result"]
+            ats_pct = ats["coverage_percent"]
+            rel_score = ev["overall_score"]
+            ats_color = "#059669" if ats_pct >= 70 else "#d97706" if ats_pct >= 50 else "#dc2626"
+            rel_color = "#059669" if rel_score >= 7 else "#d97706" if rel_score >= 5 else "#dc2626"
+
+            col_info, col_ats, col_rel, col_prep = st.columns([4, 1, 1, 1])
+            with col_info:
+                st.markdown(f"**{job['title']}**")
+                st.caption(f"{job['company']} &nbsp;·&nbsp; {job.get('location','')}")
+            with col_ats:
+                st.markdown(f'<div style="text-align:center"><span style="font-size:20px;font-weight:700;color:{ats_color}">{ats_pct}%</span><br><span style="font-size:11px;color:#94a3b8">ATS</span></div>', unsafe_allow_html=True)
+            with col_rel:
+                st.markdown(f'<div style="text-align:center"><span style="font-size:20px;font-weight:700;color:{rel_color}">{rel_score}/10</span><br><span style="font-size:11px;color:#94a3b8">relevance</span></div>', unsafe_allow_html=True)
+            with col_prep:
+                if st.checkbox("Add prep", key=f"bprep_{i}"):
+                    prep_selected.add(i)
+
+            with st.expander("📄 View tailored resume & download", expanded=False):
+                st.text_area("Resume", value=r["resume_output"], height=250,
+                             disabled=True, key=f"bres_{i}", label_visibility="collapsed")
+                dl1, dl2 = st.columns(2)
+                fname = f"resume_{job['company'].lower().replace(' ','_')}"
+                with dl1:
+                    st.download_button("📥 .txt", data=r["resume_output"],
+                                       file_name=f"{fname}.txt", mime="text/plain",
+                                       key=f"btxt_{i}", use_container_width=True)
+                with dl2:
+                    st.download_button("📥 .docx", data=resume_to_docx(r["resume_output"]),
+                                       file_name=f"{fname}.docx",
+                                       mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                       key=f"bdocx_{i}", use_container_width=True)
+            st.divider()
+
+        if prep_selected:
+            if st.button(f"🎯 Run Interview Prep for {len(prep_selected)} role{'s' if len(prep_selected) > 1 else ''}", type="primary"):
+                for idx in sorted(prep_selected):
+                    r = batch_results[idx]
+                    with st.spinner(f"Building prep for {r['job']['title']} at {r['job']['company']}..."):
+                        st.session_state.js_batch_results[idx] = run_prep_for_result(r)
+                st.rerun()
+
+        for i, r in enumerate(batch_results):
+            if r.get("prep_output"):
+                job = r["job"]
+                st.markdown(f"### 🎯 Interview Prep — {job['title']} at {job['company']}")
+                prep = r["prep_output"]
+                for t in prep.get("prep_topics", []):
+                    with st.expander(f"**{t['title']}**", expanded=False):
+                        st.markdown(f"**Why it matters:** {t['why_it_matters']}")
+                        st.markdown(f"**What to prepare:** {t['what_to_prepare']}")
+                for q in prep.get("questions", []):
+                    with st.expander(q["question"], expanded=False):
+                        st.caption(f"💡 {q['hint']}")
+                        for opt in q.get("answer_options", []):
+                            st.markdown(
+                                f'<div style="background:#f8faff;border-left:3px solid #3b82f6;'
+                                f'padding:10px 14px;border-radius:0 6px 6px 0;margin:6px 0">'
+                                f'<strong>{opt["angle"]}</strong><br>{opt["outline"]}</div>',
+                                unsafe_allow_html=True)
+                st.divider()
+
+        if st.button("← Back to Job Search"):
+            st.session_state.js_batch_results = None
+            st.session_state.page = "search"
+            st.rerun()
+
+    # -----------------------------------------------------------
+    # STAGE 1: INPUT (single JD flow)
+    # -----------------------------------------------------------
+    elif st.session_state.stage == "input" and not st.session_state.get("js_batch_results"):
 
         col_left, col_right = st.columns([1, 1], gap="large")
 
@@ -435,9 +551,9 @@ with tab_run:
                 st.rerun()
 
 # ===============================================================
-# TAB 2 — APPLICATION HISTORY
+# PAGE: HISTORY
 # ===============================================================
-with tab_history:
+if page == "history":
 
     st.subheader("📋 Application History")
     st.caption("Every job prep run is saved here automatically. Check the box once you've applied.")
@@ -522,9 +638,9 @@ with tab_history:
             st.markdown("</div>", unsafe_allow_html=True)
 
 # ===============================================================
-# TAB 3 — JOB SEARCH
+# PAGE: JOB SEARCH
 # ===============================================================
-with tab_search:
+if page == "search":
 
     st.subheader("🔍 Job Search")
 
@@ -623,21 +739,12 @@ with tab_search:
             if selected:
                 st.divider()
                 run_batch_btn = st.button(
-                    f"⚡ Run Job Prepper for {len(selected)} selected role{'s' if len(selected) > 1 else ''}",
+                    f"⚡ Run Job Prepper for {len(selected)} selected role{'s' if len(selected) > 1 else ''} →",
                     type="primary"
                 )
                 if run_batch_btn:
-                    selected_jobs = [jobs[i] for i in sorted(selected)]
-                    with st.spinner(f"Running Job Prepper in parallel for {len(selected_jobs)} role(s) — takes ~45 seconds..."):
-                        batch_results = run_batch(selected_jobs)
-                    # Auto-save each to history
-                    for r in batch_results:
-                        if "error" not in r:
-                            try:
-                                save_entry(r["parsed_jd"], r["eval_result"], r["resume_output"], r["jd_text"])
-                            except Exception:
-                                pass
-                    st.session_state.js_batch_results = batch_results
+                    st.session_state.js_pending_jobs = [jobs[i] for i in sorted(selected)]
+                    st.session_state.page = "run"
                     st.rerun()
 
     # ── STEP 3: Batch results + interview prep selection ─────────
