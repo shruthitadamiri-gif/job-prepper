@@ -98,9 +98,7 @@ if page == "run":
     if st.session_state.get("js_batch_results"):
         batch_results = st.session_state.js_batch_results
         st.subheader("Job Prepper Results")
-        st.caption("Scores from your tailored resume vs each role. Select roles for interview prep.")
-
-        prep_selected = set()
+        st.caption("Click 'Open full results' to access resume editing, ATS gap, regenerate, interview prep and all other tools.")
 
         for i, r in enumerate(batch_results):
             job = r["job"]
@@ -108,14 +106,12 @@ if page == "run":
                 st.error(f"**{job['title']} at {job['company']}** — failed: {r['error']}")
                 continue
 
-            ats = r["ats_result"]
-            ev = r["eval_result"]
-            ats_pct = ats["coverage_percent"]
-            rel_score = ev["overall_score"]
+            ats_pct = r["ats_result"]["coverage_percent"]
+            rel_score = r["eval_result"]["overall_score"]
             ats_color = "#059669" if ats_pct >= 70 else "#d97706" if ats_pct >= 50 else "#dc2626"
             rel_color = "#059669" if rel_score >= 7 else "#d97706" if rel_score >= 5 else "#dc2626"
 
-            col_info, col_ats, col_rel, col_prep = st.columns([4, 1, 1, 1])
+            col_info, col_ats, col_rel, col_open = st.columns([4, 1, 1, 1])
             with col_info:
                 st.markdown(f"**{job['title']}**")
                 st.caption(f"{job['company']} &nbsp;·&nbsp; {job.get('location','')}")
@@ -123,53 +119,27 @@ if page == "run":
                 st.markdown(f'<div style="text-align:center"><span style="font-size:20px;font-weight:700;color:{ats_color}">{ats_pct}%</span><br><span style="font-size:11px;color:#94a3b8">ATS</span></div>', unsafe_allow_html=True)
             with col_rel:
                 st.markdown(f'<div style="text-align:center"><span style="font-size:20px;font-weight:700;color:{rel_color}">{rel_score}/10</span><br><span style="font-size:11px;color:#94a3b8">relevance</span></div>', unsafe_allow_html=True)
-            with col_prep:
-                if st.checkbox("Add prep", key=f"bprep_{i}"):
-                    prep_selected.add(i)
+            with col_open:
+                if st.button("Open →", key=f"open_{i}", use_container_width=True):
+                    # Load this result into the full review stage
+                    st.session_state.result = {
+                        "parsed_jd": r["parsed_jd"],
+                        "resume_output": r["resume_output"],
+                        "prep_output": r.get("prep_output"),
+                        "eval_result": r["eval_result"],
+                        "visa_result": {},
+                        "ats_result": r["ats_result"],
+                    }
+                    st.session_state.approved_resume = r["resume_output"]
+                    st.session_state.approved_prep = r.get("prep_output")
+                    st.session_state.original_ats_result = r["ats_result"]
+                    st.session_state.jd_text = r["jd_text"]
+                    st.session_state.history_saved = True
+                    st.session_state.stage = "review"
+                    st.session_state.js_batch_results = None
+                    st.rerun()
 
-            with st.expander("📄 View tailored resume & download", expanded=False):
-                st.text_area("Resume", value=r["resume_output"], height=250,
-                             disabled=True, key=f"bres_{i}", label_visibility="collapsed")
-                dl1, dl2 = st.columns(2)
-                fname = f"resume_{job['company'].lower().replace(' ','_')}"
-                with dl1:
-                    st.download_button("📥 .txt", data=r["resume_output"],
-                                       file_name=f"{fname}.txt", mime="text/plain",
-                                       key=f"btxt_{i}", use_container_width=True)
-                with dl2:
-                    st.download_button("📥 .docx", data=resume_to_docx(r["resume_output"]),
-                                       file_name=f"{fname}.docx",
-                                       mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                       key=f"bdocx_{i}", use_container_width=True)
             st.divider()
-
-        if prep_selected:
-            if st.button(f"🎯 Run Interview Prep for {len(prep_selected)} role{'s' if len(prep_selected) > 1 else ''}", type="primary"):
-                for idx in sorted(prep_selected):
-                    r = batch_results[idx]
-                    with st.spinner(f"Building prep for {r['job']['title']} at {r['job']['company']}..."):
-                        st.session_state.js_batch_results[idx] = run_prep_for_result(r)
-                st.rerun()
-
-        for i, r in enumerate(batch_results):
-            if r.get("prep_output"):
-                job = r["job"]
-                st.markdown(f"### 🎯 Interview Prep — {job['title']} at {job['company']}")
-                prep = r["prep_output"]
-                for t in prep.get("prep_topics", []):
-                    with st.expander(f"**{t['title']}**", expanded=False):
-                        st.markdown(f"**Why it matters:** {t['why_it_matters']}")
-                        st.markdown(f"**What to prepare:** {t['what_to_prepare']}")
-                for q in prep.get("questions", []):
-                    with st.expander(q["question"], expanded=False):
-                        st.caption(f"💡 {q['hint']}")
-                        for opt in q.get("answer_options", []):
-                            st.markdown(
-                                f'<div style="background:#f8faff;border-left:3px solid #3b82f6;'
-                                f'padding:10px 14px;border-radius:0 6px 6px 0;margin:6px 0">'
-                                f'<strong>{opt["angle"]}</strong><br>{opt["outline"]}</div>',
-                                unsafe_allow_html=True)
-                st.divider()
 
         if st.button("← Back to Job Search"):
             st.session_state.js_batch_results = None
