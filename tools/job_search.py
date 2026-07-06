@@ -4,59 +4,54 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-ADZUNA_APP_ID = os.getenv("ADZUNA_APP_ID", "").strip()
-ADZUNA_APP_KEY = os.getenv("ADZUNA_APP_KEY", "").strip()
-ADZUNA_BASE = "https://api.adzuna.com/v1/api/jobs"
+SERPAPI_KEY = os.getenv("SERPAPI_KEY", "").strip()
+SERPAPI_URL = "https://serpapi.com/search"
 
 
-def search_jobs(title: str, location: str = "us", days_back: int = 30, max_results: int = 5) -> list[dict]:
+def search_jobs(title: str, location: str = "United States", days_back: int = 30, max_results: int = 5) -> list[dict]:
     """
-    Search for jobs by title using Adzuna API.
-    location: country code — 'us', 'gb', 'ca', 'au'
+    Search Google Jobs via SerpAPI. Includes LinkedIn-originated postings.
     """
-    if not ADZUNA_APP_ID or not ADZUNA_APP_KEY:
+    if not SERPAPI_KEY:
         return []
 
-    # Adzuna uses country code in URL path
-    country = _parse_country(location)
+    # Google Jobs date filter chip
+    chips = _date_chip(days_back)
 
     params = {
-        "app_id": ADZUNA_APP_ID,
-        "app_key": ADZUNA_APP_KEY,
-        "results_per_page": max_results,
-        "what": title,
-        "where": location if country == "us" else "",
-        "max_days_old": days_back,
-        "content-type": "application/json",
-        "sort_by": "date",
+        "engine": "google_jobs",
+        "q": title,
+        "location": location,
+        "api_key": SERPAPI_KEY,
+        "chips": chips,
+        "hl": "en",
     }
 
     try:
-        resp = requests.get(
-            f"{ADZUNA_BASE}/{country}/search/1",
-            params=params,
-            timeout=10
-        )
+        resp = requests.get(SERPAPI_URL, params=params, timeout=15)
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
-        print(f"Adzuna error for '{title}': {e}")
+        print(f"SerpAPI error for '{title}': {e}")
         return []
 
     jobs = []
-    for job in data.get("results", []):
-        created = job.get("created", "")
-        date_posted = created[:10] if created else "Unknown"
+    for job in data.get("jobs_results", [])[:max_results]:
+        # Extract source (LinkedIn, Indeed, etc.)
+        extensions = job.get("detected_extensions", {})
+        sources = [h.get("link", "") for h in job.get("apply_options", [])]
+        via = job.get("via", "")
 
         jobs.append({
             "title": job.get("title", ""),
-            "company": job.get("company", {}).get("display_name", ""),
-            "location": job.get("location", {}).get("display_name", ""),
-            "is_remote": "remote" in job.get("title", "").lower() or "remote" in job.get("description", "").lower(),
-            "date_posted": date_posted,
-            "url": job.get("redirect_url", ""),
+            "company": job.get("company_name", ""),
+            "location": job.get("location", ""),
+            "is_remote": "remote" in job.get("location", "").lower() or "remote" in job.get("title", "").lower(),
+            "date_posted": extensions.get("posted_at", ""),
+            "url": job.get("apply_options", [{}])[0].get("link", "") if job.get("apply_options") else "",
             "description_snippet": job.get("description", "")[:400],
-            "employment_type": job.get("contract_time", ""),
+            "employment_type": extensions.get("schedule_type", ""),
+            "via": via,  # e.g. "via LinkedIn", "via Indeed"
         })
 
     return jobs
@@ -70,12 +65,12 @@ def search_all_titles(titles: list[str], location: str = "United States", days_b
     return results
 
 
-def _parse_country(location: str) -> str:
-    loc = location.lower()
-    if any(x in loc for x in ["uk", "united kingdom", "britain", "england"]):
-        return "gb"
-    if any(x in loc for x in ["canada", "toronto", "vancouver"]):
-        return "ca"
-    if any(x in loc for x in ["australia", "sydney", "melbourne"]):
-        return "au"
-    return "us"
+def _date_chip(days_back: int) -> str:
+    if days_back <= 1:
+        return "date_posted:today"
+    elif days_back <= 3:
+        return "date_posted:3days"
+    elif days_back <= 7:
+        return "date_posted:week"
+    else:
+        return "date_posted:month"

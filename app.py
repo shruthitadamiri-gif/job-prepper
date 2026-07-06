@@ -529,9 +529,9 @@ with tab_search:
     st.subheader("🔍 Job Search")
     st.caption("Discovers job titles matched to your resume — both direct fits and adjacent roles worth exploring.")
 
-    has_jsearch = bool(os.getenv("JSEARCH_API_KEY", "").strip())
-    if not has_jsearch:
-        st.warning("Add `JSEARCH_API_KEY` to your Streamlit secrets to enable job search.")
+    has_serpapi = bool(os.getenv("SERPAPI_KEY", "").strip())
+    if not has_serpapi:
+        st.warning("Add `SERPAPI_KEY` to your Streamlit secrets to enable job search.")
 
     # --- Controls ---
     col_loc, col_days, col_btn = st.columns([2, 1, 1])
@@ -543,7 +543,7 @@ with tab_search:
                                   format_func=lambda d: f"Last {d} days")
     with col_btn:
         search_btn = st.button("🔍 Search Jobs", type="primary", use_container_width=True,
-                                disabled=not has_jsearch)
+                                disabled=not has_serpapi)
 
     if search_btn:
         with st.spinner("Discovering titles from your resume..."):
@@ -555,7 +555,7 @@ with tab_search:
             [t["title"] for t in titles_data["worth_exploring"]]
         )
 
-        with st.spinner(f"Searching {len(all_titles)} job titles on JSearch..."):
+        with st.spinner(f"Searching {len(all_titles)} job titles on Google Jobs (LinkedIn, Indeed + more)..."):
             raw_results = search_all_titles(all_titles, location=location, days_back=days_back)
 
         # Rank all jobs together
@@ -620,6 +620,7 @@ with tab_search:
                         f'<span style="color:#475569">{job["company"]}</span> &nbsp;·&nbsp; '
                         f'<span style="color:#94a3b8;font-size:13px">📍 {job["location"] or "Not specified"}</span> &nbsp;·&nbsp; '
                         f'<span style="color:#94a3b8;font-size:13px">📅 {job["date_posted"]}</span>'
+                        f'{(" &nbsp;·&nbsp; <span style=\"color:#6d28d9;font-size:12px;font-weight:500\">" + job["via"] + "</span>") if job.get("via") else ""}'
                         f'</div>'
                         f'<div style="text-align:right;min-width:70px">'
                         f'<span style="font-size:18px;font-weight:700;color:{score_color}">{score}%</span><br>'
