@@ -1,4 +1,8 @@
+import ipaddress
 import re
+import socket
+from urllib.parse import urlparse
+
 import requests
 from bs4 import BeautifulSoup
 
@@ -41,6 +45,49 @@ def _looks_garbled(text: str) -> bool:
     return False
 
 
+_PRIVATE_NETWORKS = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+]
+
+
+def _validate_url(url: str) -> str | None:
+    """
+    Returns an error message if the URL is unsafe, else None.
+    Rejects non-http(s) schemes, userinfo, and private/reserved IPs.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return "Invalid URL format."
+
+    if parsed.scheme not in ("http", "https"):
+        return "Only http and https URLs are allowed."
+
+    if parsed.username or parsed.password:
+        return "URLs with credentials (user:pass@host) are not allowed."
+
+    hostname = parsed.hostname
+    if not hostname:
+        return "URL has no hostname."
+
+    try:
+        ip = ipaddress.ip_address(socket.gethostbyname(hostname))
+    except Exception:
+        return f"Could not resolve hostname: {hostname}"
+
+    for network in _PRIVATE_NETWORKS:
+        if ip in network:
+            return f"Requests to private/reserved IP ranges are not allowed ({ip})."
+
+    return None
+
+
 def fetch_jd_from_url(url: str) -> dict:
     """
     Fetches a job posting URL and extracts visible text as the job
@@ -54,6 +101,10 @@ def fetch_jd_from_url(url: str) -> dict:
             "message": str       # human-readable explanation
         }
     """
+    url_error = _validate_url(url)
+    if url_error:
+        return {"success": False, "jd_text": "", "message": url_error}
+
     try:
         response = requests.get(url, headers=REQUEST_HEADERS, timeout=REQUEST_TIMEOUT_SECONDS)
     except requests.exceptions.Timeout:
