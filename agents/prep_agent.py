@@ -1,12 +1,37 @@
 import os
+import re
+import time
 import anthropic
 from dotenv import load_dotenv
 from tools.web_search import search_interview_questions
 from tools.llm_json import parse_llm_json
+from tools.usage_logger import log_usage
 
 load_dotenv()
 
 client = anthropic.Anthropic(max_retries=4)
+
+RESUME_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resume.txt")
+
+
+def _candidate_bio() -> str:
+    """
+    Extract the SUMMARY section from resume.txt so the prep prompt stays
+    in sync with the resume without hardcoded strings.
+    Falls back to the first 400 characters if no SUMMARY header is found.
+    """
+    try:
+        with open(RESUME_PATH) as f:
+            text = f.read()
+        m = re.search(
+            r"^SUMMARY\s*\n(.*?)(?=\n[A-Z][A-Z &/]+\n)",
+            text, re.MULTILINE | re.DOTALL
+        )
+        if m:
+            return m.group(1).strip()
+        return text[:400].strip()
+    except Exception:
+        return ""
 
 ROUND_EMPHASIS = {
     "recruiter_screen": (
@@ -33,6 +58,7 @@ def run_prep_agent(
     parsed_jd: dict,
     round: str = "hiring_manager",
     invite_context: str = "",
+    session_id: str = "unknown",
 ) -> dict:
     """
     Generates a structured interview prep guide with topic tags and
@@ -65,11 +91,12 @@ question that closely matches something from these sources.
     else:
         web_section = f"(Web search unavailable: {search_result['message']})"
 
+    bio = _candidate_bio()
+
     prompt = f"""You are an expert technical interview coach specializing in AI Product Management roles.
 
-The candidate is Shruthi Tadamiri — a Principal AI/ML PM at Verizon with 5+ years experience.
-Her background: led Model Monitoring platform (346+ ML models), owned NBx model portfolio
-($127M impact), working on Agentic AI and Channel Orchestration. Prior data scientist at RepTrak.
+The candidate's background (from their resume summary):
+{bio}
 
 She is interviewing for: {role} at {company}
 Interview round: {round_label}
@@ -115,11 +142,14 @@ Requirements:
 - reported: true only if the question closely matches something from the web search results above
 - All answer outlines must reference Shruthi's actual experience — no generic frameworks"""
 
+    _model = "claude-sonnet-4-6"
+    _t0 = time.monotonic()
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=_model,
         max_tokens=8000,
         messages=[{"role": "user", "content": prompt}]
     )
+    log_usage(session_id, "prep_agent", _model, message, int((time.monotonic() - _t0) * 1000))
 
     return parse_llm_json(message.content[0].text)
 
