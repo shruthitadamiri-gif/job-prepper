@@ -10,7 +10,10 @@ from agents.prep_agent import run_prep_agent
 from agents.ats_agent import run_ats_agent
 from tools.docx_export import resume_to_docx
 from tools.jd_fetcher import fetch_jd_from_url
-from tools.history_store import save_entry, load_history, set_applied, delete_entry
+from tools.opportunity_store import (
+    create_opportunity, list_opportunities, update_stage, update_fields,
+    delete_opportunity,
+)
 from agents.title_discovery_agent import discover_titles
 from tools.job_search import search_all_titles, job_key as _job_key
 from tools.batch_runner import run_batch, run_prep_for_result
@@ -61,7 +64,7 @@ st.markdown("""
 for key, default in [
     ("stage", "input"), ("result", None),
     ("approved_resume", None), ("approved_prep", None),
-    ("history_saved", False), ("page", "search"),
+    ("opportunity_id", None), ("history_saved", False), ("page", "search"),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -73,7 +76,7 @@ st.title("🎯 Job Prepper")
 st.caption("Find roles, tailor your resume, and prep for interviews — powered by an agentic AI system")
 
 nav_cols = st.columns([1, 1, 1, 4])
-pages = [("🔍 Job Search", "search"), ("🎯 Run Job Prepper", "run"), ("📋 History", "history")]
+pages = [("🔍 Job Search", "search"), ("🎯 Run Job Prepper", "run"), ("📋 Pipeline", "pipeline")]
 for col, (label, key) in zip(nav_cols, pages):
     with col:
         active = st.session_state.page == key
@@ -104,7 +107,19 @@ if page == "run":
         for r in batch_results:
             if "error" not in r:
                 try:
-                    save_entry(r["parsed_jd"], r["eval_result"], r["resume_output"], r["jd_text"])
+                    pjd = r["parsed_jd"] or {}
+                    job = r.get("job", {})
+                    create_opportunity(
+                        title=pjd.get("role", job.get("title", "")),
+                        company=pjd.get("company", job.get("company", "")),
+                        location=pjd.get("location", job.get("location", "")),
+                        url=job.get("url", ""),
+                        jd_snapshot=r.get("jd_text", ""),
+                        source="search",
+                        stage="tailored",
+                        eval_result=r.get("eval_result"),
+                        ats_result=r.get("ats_result"),
+                    )
                 except Exception:
                     pass
 
@@ -318,13 +333,23 @@ if page == "run":
         role = parsed_jd.get("role", "")
         company = parsed_jd.get("company", "")
 
-        # Auto-save to history once per run
+        # Auto-save to opportunities once per run
         if not st.session_state.history_saved:
             try:
-                save_entry(parsed_jd, eval_result, st.session_state.approved_resume, st.session_state.jd_text)
+                opp_id = create_opportunity(
+                    title=parsed_jd.get("role", ""),
+                    company=parsed_jd.get("company", ""),
+                    location=parsed_jd.get("location", ""),
+                    jd_snapshot=st.session_state.jd_text,
+                    source="manual",
+                    stage="tailored",
+                    eval_result=eval_result,
+                    ats_result=result.get("ats_result"),
+                )
+                st.session_state.opportunity_id = opp_id
                 st.session_state.history_saved = True
             except Exception as _e:
-                st.warning(f"History save failed: {_e}")
+                st.warning(f"Save failed: {_e}")
 
         st.subheader(f"Results: {role} at {company}")
 
@@ -532,7 +557,7 @@ if page == "run":
 
         st.divider()
 
-        col1, col2, col3 = st.columns([1, 1, 2])
+        col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
         with col1:
             st.download_button(
                 label="📥 Download .txt",
@@ -550,98 +575,164 @@ if page == "run":
                 use_container_width=True
             )
         with col3:
+            opp_id = st.session_state.get("opportunity_id")
+            if opp_id:
+                if st.button("✅ Mark as Applied", use_container_width=True, type="primary"):
+                    try:
+                        update_stage(opp_id, "applied")
+                        update_fields(opp_id, {"resume_version": st.session_state.approved_resume})
+                        st.success("Marked as applied — resume version saved.")
+                    except Exception as _e:
+                        st.warning(f"Could not update stage: {_e}")
+        with col4:
             if st.button("🔁 Start Over with New JD", use_container_width=True):
                 for key in ["stage", "result", "approved_resume", "approved_prep",
-                            "jd_text", "role", "jd_text_draft", "history_saved"]:
+                            "jd_text", "role", "jd_text_draft", "history_saved", "opportunity_id"]:
                     st.session_state.pop(key, None)
                 st.rerun()
 
 # ===============================================================
-# PAGE: HISTORY
+# PAGE: PIPELINE
 # ===============================================================
-if page == "history":
+if page == "pipeline":
+    from datetime import timezone as _tz
 
-    st.subheader("📋 Application History")
-    st.caption("Every job prep run is saved here automatically. Check the box once you've applied.")
+    st.subheader("📋 Application Pipeline")
 
-    entries = load_history()
+    all_opps = list_opportunities()
 
-    if not entries:
-        st.info("No history yet — run Job Prepper on a role to see it here.")
+    # ── Stage summary strip ──────────────────────────────────────
+    ACTIVE_STAGES = ["discovered", "screened_in", "tailored", "applied", "responded", "interviewing"]
+    stage_counts = {s: 0 for s in ACTIVE_STAGES}
+    for o in all_opps:
+        s = o.get("stage", "")
+        if s in stage_counts:
+            stage_counts[s] += 1
+
+    metric_cols = st.columns(len(ACTIVE_STAGES))
+    for col, stage in zip(metric_cols, ACTIVE_STAGES):
+        with col:
+            st.metric(stage.replace("_", " ").title(), stage_counts[stage])
+
+    st.divider()
+
+    # ── Nudges ───────────────────────────────────────────────────
+    now_utc = datetime.now(_tz.utc)
+    nudges = []
+    for o in all_opps:
+        if o.get("stage") != "applied":
+            continue
+        updated = o.get("stage_updated_at", "")
+        try:
+            updated_dt = datetime.fromisoformat(updated)
+            if updated_dt.tzinfo is None:
+                updated_dt = updated_dt.replace(tzinfo=_tz.utc)
+            days_in = (now_utc - updated_dt).days
+            if days_in >= 14:
+                nudges.append((o, days_in))
+        except Exception:
+            pass
+
+    if nudges:
+        st.markdown("#### ⏰ Follow-up nudges")
+        for o, days_in in nudges:
+            nc1, nc2, nc3 = st.columns([4, 1, 1])
+            with nc1:
+                st.warning(
+                    f"**{o.get('company','')} — {o.get('title','')}**: "
+                    f"No response in {days_in}d — follow up or mark ghosted."
+                )
+            with nc2:
+                if st.button("Mark ghosted", key=f"ghost_{o['id']}"):
+                    update_stage(o["id"], "ghosted")
+                    st.rerun()
+            with nc3:
+                if st.button("Draft follow-up", key=f"followup_{o['id']}"):
+                    update_fields(o["id"], {"notes": f"[Follow-up drafted {now_utc.date()}]"})
+                    st.info("Follow-up drafting coming in a future update.")
+        st.divider()
+
+    # ── Opportunities list ────────────────────────────────────────
+    STAGE_ORDER = ["interviewing", "responded", "applied", "tailored",
+                   "screened_in", "discovered", "offer",
+                   "screened_out", "rejected", "ghosted", "withdrawn"]
+
+    def _stage_sort_key(o):
+        s = o.get("stage", "")
+        try:
+            return (STAGE_ORDER.index(s), o.get("stage_updated_at", ""))
+        except ValueError:
+            return (99, o.get("stage_updated_at", ""))
+
+    sorted_opps = sorted(all_opps, key=_stage_sort_key)
+
+    if not sorted_opps:
+        st.info("No opportunities yet — run Job Prepper on a role to see it here.")
     else:
-        for entry in entries:
-            applied = entry.get("applied", False)
-            score = entry.get("relevance_score", 0)
-            score_color = "#059669" if score >= 7 else "#d97706" if score >= 5 else "#dc2626"
-            date_str = entry.get("date_created", "")[:10]
-            loc = entry.get("location", "") or "—"
-            salary = entry.get("salary_range", "") or "Not listed"
+        ALL_STAGES = ["discovered", "screened_in", "screened_out", "tailored",
+                      "applied", "responded", "interviewing", "offer",
+                      "rejected", "ghosted", "withdrawn"]
 
-            # Card wrapper — slightly muted if applied
-            opacity = "0.6" if applied else "1.0"
-            st.markdown(
-                f'<div style="opacity:{opacity};border:1px solid #e2e8f0;border-radius:10px;'
-                f'padding:14px 18px;margin-bottom:12px;background:{"#f8faff" if not applied else "#f1f5f9"}">',
-                unsafe_allow_html=True
-            )
+        for o in sorted_opps:
+            opp_id = o["id"]
+            stage = o.get("stage", "tailored")
+            title = o.get("title", "Unknown role")
+            company = o.get("company", "Unknown company")
+            updated = o.get("stage_updated_at", "")[:10]
 
-            col_main, col_score, col_action = st.columns([4, 1, 1])
+            try:
+                updated_dt = datetime.fromisoformat(o.get("stage_updated_at", ""))
+                if updated_dt.tzinfo is None:
+                    updated_dt = updated_dt.replace(tzinfo=_tz.utc)
+                days_in = (now_utc - updated_dt).days
+                days_label = f"{days_in}d in {stage.replace('_',' ')}"
+            except Exception:
+                days_label = stage.replace("_", " ")
 
-            with col_main:
-                applied_badge = ' <span style="background:#d1fae5;color:#065f46;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600">✓ Applied</span>' if applied else ''
-                st.markdown(
-                    f'**{entry["company"]}** — {entry["role"]}{applied_badge}',
-                    unsafe_allow_html=True
+            col_info, col_stage, col_del = st.columns([4, 2, 1])
+            with col_info:
+                st.markdown(f"**{company}** — {title}")
+                st.caption(f"📅 {updated} &nbsp;|&nbsp; {days_label}")
+            with col_stage:
+                new_stage = st.selectbox(
+                    "Stage",
+                    options=ALL_STAGES,
+                    index=ALL_STAGES.index(stage) if stage in ALL_STAGES else 0,
+                    key=f"stage_sel_{opp_id}",
+                    label_visibility="collapsed",
                 )
-                st.caption(f"📅 {date_str} &nbsp;|&nbsp; 📍 {loc} &nbsp;|&nbsp; 💰 {salary}")
-
-            with col_score:
-                st.markdown(
-                    f'<div style="text-align:center;padding-top:4px">'
-                    f'<span style="font-size:20px;font-weight:700;color:{score_color}">{score}</span>'
-                    f'<span style="font-size:11px;color:#94a3b8">/10</span><br>'
-                    f'<span style="font-size:10px;color:#94a3b8">relevance</span></div>',
-                    unsafe_allow_html=True
-                )
-
-            with col_action:
-                new_applied = st.checkbox(
-                    "Applied",
-                    value=applied,
-                    key=f"applied_{entry['id']}"
-                )
-                if new_applied != applied:
-                    set_applied(entry["id"], new_applied)
+                if new_stage != stage:
+                    update_stage(opp_id, new_stage)
+                    st.rerun()
+            with col_del:
+                if st.button("🗑", key=f"del_{opp_id}", use_container_width=True):
+                    delete_opportunity(opp_id)
                     st.rerun()
 
-            # Resume download + delete (always available)
-            exp_label = f"📄 View / Download Resume — {entry['company']}"
-            with st.expander(exp_label, expanded=False):
-                st.text_area(
-                    "Resume",
-                    value=entry.get("resume_output", ""),
-                    height=300,
-                    label_visibility="collapsed",
-                    disabled=True,
-                    key=f"resume_view_{entry['id']}"
-                )
-                dl_col, del_col, _ = st.columns([1, 1, 3])
-                with dl_col:
-                    fname = f"resume_{entry['company'].lower().replace(' ','_')}.docx"
-                    st.download_button(
-                        "📥 Download .docx",
-                        data=resume_to_docx(entry.get("resume_output", "")),
-                        file_name=fname,
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        use_container_width=True,
-                        key=f"dl_{entry['id']}"
+            resume_ver = o.get("resume_version") or o.get("resume_output")
+            if resume_ver:
+                with st.expander(f"📄 Resume — {company}", expanded=False):
+                    st.text_area(
+                        "Resume",
+                        value=resume_ver,
+                        height=250,
+                        label_visibility="collapsed",
+                        disabled=True,
+                        key=f"resume_view_{opp_id}",
                     )
-                with del_col:
-                    if st.button("🗑 Delete", key=f"del_{entry['id']}", use_container_width=True):
-                        delete_entry(entry["id"])
-                        st.rerun()
+                    dl_col, _ = st.columns([1, 3])
+                    with dl_col:
+                        fname = f"resume_{company.lower().replace(' ','_')}.docx"
+                        st.download_button(
+                            "📥 Download .docx",
+                            data=resume_to_docx(resume_ver),
+                            file_name=fname,
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            use_container_width=True,
+                            key=f"dl_{opp_id}",
+                        )
 
-            st.markdown("</div>", unsafe_allow_html=True)
+            st.divider()
 
 # ===============================================================
 # PAGE: JOB SEARCH
