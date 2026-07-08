@@ -10,6 +10,14 @@ from tools.visa_check import check_visa_sponsorship
 
 load_dotenv()
 
+RESUME_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resume.txt")
+
+
+def _load_source_resume() -> str:
+    with open(RESUME_PATH) as f:
+        return f.read()
+
+
 # ---------------------------------------------------------------
 # Pipeline topology (prep runs on demand in the UI, not here):
 #
@@ -100,8 +108,9 @@ def ats_agent_node(state: JobPrepState) -> JobPrepState:
 
 def evaluator_node(state: JobPrepState) -> JobPrepState:
     print("Running evaluator...")
+    source_resume = _load_source_resume()
     eval_result = run_evaluator(
-        state["resume_output"], "", state["jd_text"], state["parsed_jd"]
+        state["resume_output"], source_resume, state["jd_text"], state["parsed_jd"]
     )
     return {**state, "eval_result": eval_result}
 

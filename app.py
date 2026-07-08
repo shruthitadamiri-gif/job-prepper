@@ -411,6 +411,16 @@ if page == "run":
                 else:
                     st.caption("None missing — full coverage!")
 
+        # Unsupported claims warning (factual accuracy gate)
+        unsupported = eval_result.get("unsupported_claims", [])
+        if unsupported:
+            claims_list = "\n".join(f"- {c}" for c in unsupported)
+            st.error(
+                f"⚠️ **Factual accuracy issue — {len(unsupported)} unsupported claim(s) detected**\n\n"
+                f"The following claims in the tailored resume could not be traced to your source resume. "
+                f"Review and remove or correct before submitting:\n\n{claims_list}"
+            )
+
         st.divider()
 
         # Resume + Prep tabs
