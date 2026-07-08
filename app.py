@@ -6,17 +6,17 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import json
 from datetime import datetime
 from agents.resume_agent import run_resume_agent
-from agents.prep_agent import run_prep_agent
+from agents.prep_agent import run_prep_agent, ROUND_EMPHASIS
 from agents.ats_agent import run_ats_agent
 from tools.docx_export import resume_to_docx
 from tools.jd_fetcher import fetch_jd_from_url
 from tools.opportunity_store import (
     create_opportunity, list_opportunities, update_stage, update_fields,
-    delete_opportunity,
+    delete_opportunity, title_performance_context,
 )
 from agents.title_discovery_agent import discover_titles
 from tools.job_search import search_all_titles, job_key as _job_key
-from tools.batch_runner import run_batch, run_prep_for_result
+from tools.batch_runner import run_batch
 from graph import build_graph, make_initial_state
 
 # ---------------------------------------------------------------
@@ -65,6 +65,7 @@ for key, default in [
     ("stage", "input"), ("result", None),
     ("approved_resume", None), ("approved_prep", None),
     ("opportunity_id", None), ("history_saved", False), ("page", "search"),
+    ("approved_prep", None),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -74,6 +75,22 @@ for key, default in [
 # ---------------------------------------------------------------
 st.title("🎯 Job Prepper")
 st.caption("Find roles, tailor your resume, and prep for interviews — powered by an agentic AI system")
+
+# Sidebar: new matches badge (screened_in in last 48h)
+try:
+    from datetime import timezone as _sidebar_tz
+    _cutoff = (datetime.now(_sidebar_tz.utc) - __import__("datetime").timedelta(hours=48)).isoformat()
+    _new_matches = [
+        o for o in list_opportunities(stage="screened_in")
+        if o.get("stage_updated_at", "") >= _cutoff
+    ]
+    if _new_matches:
+        st.sidebar.metric("🆕 New matches (48h)", len(_new_matches))
+        if st.sidebar.button("View in Pipeline →"):
+            st.session_state.page = "pipeline"
+            st.rerun()
+except Exception:
+    pass
 
 nav_cols = st.columns([1, 1, 1, 4])
 pages = [("🔍 Job Search", "search"), ("🎯 Run Job Prepper", "run"), ("📋 Pipeline", "pipeline")]
@@ -530,77 +547,12 @@ if page == "run":
                     st.rerun()
 
         with tab2:
-            prep = result.get("prep_output")
-
-            CATEGORY_COLORS = {
-                "Behavioral":      ("#1d4ed8", "#dbeafe"),
-                "Technical AI/ML": ("#6d28d9", "#ede9fe"),
-                "Product Sense":   ("#065f46", "#d1fae5"),
-                "Situational":     ("#92400e", "#fef3c7"),
-            }
-
-            def category_badge(cat):
-                fg, bg = CATEGORY_COLORS.get(cat, ("#374151", "#f3f4f6"))
-                return (f'<span style="background:{bg};color:{fg};padding:2px 10px;'
-                        f'border-radius:12px;font-size:12px;font-weight:600">{cat}</span>')
-
-            def topic_badge(topic):
-                return (f'<span style="background:#f1f5f9;color:#475569;padding:2px 10px;'
-                        f'border-radius:12px;font-size:12px;font-weight:500;'
-                        f'border:1px solid #cbd5e1">🏷 {topic}</span>')
-
-            if not prep:
-                st.markdown("### 🎯 Interview Prep Guide")
-                st.info("Interview prep is generated on demand — it searches the web for real questions and takes ~30 seconds.")
-                if st.button("🚀 Run Interview Prep", type="primary"):
-                    with st.spinner("Searching the web for real interview Qs + building prep guide (~30s)..."):
-                        new_prep = run_prep_agent(st.session_state.jd_text, parsed_jd)
-                        st.session_state.approved_prep = new_prep
-                        st.session_state.result["prep_output"] = new_prep
-                    st.rerun()
-            else:
-                st.markdown("### 📚 Preparation Topics")
-                for i, t in enumerate(prep.get("prep_topics", []), 1):
-                    with st.expander(f"**{i}. {t['title']}**", expanded=False):
-                        st.markdown(f"**Why it matters:** {t['why_it_matters']}")
-                        st.markdown(f"**What to prepare:** {t['what_to_prepare']}")
-
-                st.divider()
-                st.markdown("### ❓ Interview Questions")
-
-                for cat in ["Behavioral", "Technical AI/ML", "Product Sense", "Situational"]:
-                    cat_qs = [q for q in prep.get("questions", []) if q.get("category") == cat]
-                    if not cat_qs:
-                        continue
-                    fg, bg = CATEGORY_COLORS.get(cat, ("#374151", "#f3f4f6"))
-                    st.markdown(
-                        f'<div style="background:{bg};color:{fg};padding:6px 14px;'
-                        f'border-radius:8px;font-weight:700;font-size:14px;'
-                        f'margin:20px 0 10px 0">{cat}</div>',
-                        unsafe_allow_html=True
-                    )
-                    for q in cat_qs:
-                        reported_tag = ' <span style="color:#dc2626;font-size:11px;font-weight:700">● REPORTED</span>' if q.get("reported") else ""
-                        with st.expander(q["question"], expanded=False):
-                            st.markdown(f'{category_badge(q["category"])} &nbsp; {topic_badge(q["topic"])}{reported_tag}', unsafe_allow_html=True)
-                            st.caption(f"💡 {q['hint']}")
-                            st.markdown("**Answer angles:**")
-                            for opt in q.get("answer_options", []):
-                                st.markdown(
-                                    f'<div style="background:#f8faff;border-left:3px solid #3b82f6;'
-                                    f'padding:10px 14px;border-radius:0 6px 6px 0;margin:6px 0">'
-                                    f'<strong>{opt["angle"]}</strong><br>{opt["outline"]}</div>',
-                                    unsafe_allow_html=True
-                                )
-
-                col1, _ = st.columns([1, 3])
-                with col1:
-                    if st.button("🔄 Regenerate Prep"):
-                        with st.spinner("Searching web + regenerating prep guide..."):
-                            new_prep = run_prep_agent(st.session_state.jd_text, parsed_jd)
-                            st.session_state.approved_prep = new_prep
-                            st.session_state.result["prep_output"] = new_prep
-                        st.rerun()
+            st.markdown("### 🎯 Interview Prep")
+            st.info(
+                "Interview prep is generated when you're actually responding to a role — "
+                "not at tailoring time. Once you move an opportunity to **Responded** or "
+                "**Interviewing** in the **Pipeline** page, a round-aware prep guide becomes available there."
+            )
 
         st.divider()
 
@@ -699,6 +651,89 @@ if page == "pipeline":
                     st.info("Follow-up drafting coming in a future update.")
         st.divider()
 
+    # ── Funnel metrics ────────────────────────────────────────────
+    def _funnel_stats(opps: list[dict]) -> dict:
+        """Compute funnel metrics and per-title performance. Shared with daily_discovery."""
+        applied = [o for o in opps if o.get("stage") in
+                   ("applied", "responded", "interviewing", "offer", "rejected", "ghosted")]
+        responded = [o for o in opps if o.get("stage") in
+                     ("responded", "interviewing", "offer")]
+        interviewing = [o for o in opps if o.get("stage") in ("interviewing", "offer")]
+        offers = [o for o in opps if o.get("stage") == "offer"]
+        ghosted = [o for o in opps if o.get("stage") == "ghosted"]
+
+        response_rate = round(len(responded) / len(applied) * 100) if applied else 0
+        interview_rate = round(len(interviewing) / len(applied) * 100) if applied else 0
+        offer_rate = round(len(offers) / len(applied) * 100) if applied else 0
+
+        # Days in applied before response
+        days_to_response = []
+        for o in responded:
+            try:
+                applied_dt = datetime.fromisoformat(o.get("date_applied", ""))
+                responded_dt = datetime.fromisoformat(o.get("stage_updated_at", ""))
+                if applied_dt.tzinfo is None:
+                    applied_dt = applied_dt.replace(tzinfo=_tz.utc)
+                if responded_dt.tzinfo is None:
+                    responded_dt = responded_dt.replace(tzinfo=_tz.utc)
+                days_to_response.append((responded_dt - applied_dt).days)
+            except Exception:
+                pass
+        median_days = sorted(days_to_response)[len(days_to_response) // 2] if days_to_response else None
+
+        # Per searched_title performance
+        title_stats: dict[str, dict] = {}
+        for o in opps:
+            t = o.get("searched_title") or "manual"
+            if t not in title_stats:
+                title_stats[t] = {"found": 0, "screened_in": 0, "applied": 0, "responded": 0}
+            title_stats[t]["found"] += 1
+            if o.get("stage") in ("screened_in", "tailored", "applied", "responded", "interviewing", "offer"):
+                title_stats[t]["screened_in"] += 1
+            if o.get("stage") in ("applied", "responded", "interviewing", "offer"):
+                title_stats[t]["applied"] += 1
+            if o.get("stage") in ("responded", "interviewing", "offer"):
+                title_stats[t]["responded"] += 1
+
+        return {
+            "applied_count": len(applied),
+            "response_rate": response_rate,
+            "interview_rate": interview_rate,
+            "offer_rate": offer_rate,
+            "ghosted_count": len(ghosted),
+            "median_days_to_response": median_days,
+            "title_stats": title_stats,
+        }
+
+    stats = _funnel_stats(all_opps)
+
+    with st.expander("📊 Funnel metrics", expanded=False):
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Response rate", f"{stats['response_rate']}%", help="responded+ / applied")
+        m2.metric("Interview rate", f"{stats['interview_rate']}%", help="interviewing+ / applied")
+        m3.metric("Offer rate", f"{stats['offer_rate']}%", help="offers / applied")
+        m4.metric("Ghosted", stats["ghosted_count"])
+
+        if stats["median_days_to_response"] is not None:
+            st.caption(f"Median days applied → response: **{stats['median_days_to_response']}d**")
+
+        if stats["title_stats"]:
+            import pandas as pd
+            rows = []
+            for title, ts in stats["title_stats"].items():
+                rr = round(ts["responded"] / ts["applied"] * 100) if ts["applied"] else 0
+                rows.append({
+                    "Searched title": title,
+                    "Found": ts["found"],
+                    "Screened in": ts["screened_in"],
+                    "Applied": ts["applied"],
+                    "Responded": ts["responded"],
+                    "Response rate": f"{rr}%",
+                })
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    st.divider()
+
     # ── Opportunities list ────────────────────────────────────────
     STAGE_ORDER = ["interviewing", "responded", "applied", "tailored",
                    "screened_in", "discovered", "offer",
@@ -719,6 +754,21 @@ if page == "pipeline":
         ALL_STAGES = ["discovered", "screened_in", "screened_out", "tailored",
                       "applied", "responded", "interviewing", "offer",
                       "rejected", "ghosted", "withdrawn"]
+
+        PREP_ROUNDS = list(ROUND_EMPHASIS.keys())
+        PREP_ROUND_LABELS = {
+            "recruiter_screen": "Recruiter screen",
+            "hiring_manager": "Hiring manager",
+            "technical": "Technical",
+            "onsite_loop": "Onsite loop",
+        }
+
+        CATEGORY_COLORS = {
+            "Behavioral":      ("#1d4ed8", "#dbeafe"),
+            "Technical AI/ML": ("#6d28d9", "#ede9fe"),
+            "Product Sense":   ("#065f46", "#d1fae5"),
+            "Situational":     ("#92400e", "#fef3c7"),
+        }
 
         for o in sorted_opps:
             opp_id = o["id"]
@@ -779,6 +829,71 @@ if page == "pipeline":
                             key=f"dl_{opp_id}",
                         )
 
+            # Interview prep — available once stage is responded or later
+            if stage in ("responded", "interviewing", "offer"):
+                prep_results = o.get("prep_results") or {}
+                with st.expander("🎯 Interview prep", expanded=False):
+                    pc1, pc2 = st.columns([1, 2])
+                    with pc1:
+                        selected_round = st.selectbox(
+                            "Round",
+                            options=PREP_ROUNDS,
+                            format_func=lambda r: PREP_ROUND_LABELS.get(r, r),
+                            key=f"round_sel_{opp_id}",
+                        )
+                    with pc2:
+                        invite_ctx = st.text_area(
+                            "Paste interview invite / recruiter email (optional)",
+                            key=f"invite_{opp_id}",
+                            height=80,
+                            label_visibility="visible",
+                        )
+
+                    if st.button("🚀 Generate prep guide", key=f"genprep_{opp_id}", type="primary"):
+                        jd_snap = o.get("jd_snapshot", "")
+                        parsed_jd_for_prep = {"role": title, "company": company,
+                                              "required_skills": [], "keywords": []}
+                        with st.spinner(f"Searching the web + building {PREP_ROUND_LABELS[selected_round]} prep (~30s)..."):
+                            new_prep = run_prep_agent(
+                                jd_snap, parsed_jd_for_prep,
+                                round=selected_round,
+                                invite_context=invite_ctx,
+                            )
+                        prep_results[selected_round] = new_prep
+                        update_fields(opp_id, {"prep_results": prep_results})
+                        st.rerun()
+
+                    # Show stored prep for the selected round
+                    if selected_round in prep_results:
+                        prep = prep_results[selected_round]
+                        st.markdown(f"**{PREP_ROUND_LABELS[selected_round]} prep guide**")
+                        for i, t in enumerate(prep.get("prep_topics", []), 1):
+                            with st.expander(f"{i}. {t['title']}", expanded=False):
+                                st.markdown(f"**Why it matters:** {t['why_it_matters']}")
+                                st.markdown(f"**What to prepare:** {t['what_to_prepare']}")
+                        st.markdown("---")
+                        for cat in ["Behavioral", "Technical AI/ML", "Product Sense", "Situational"]:
+                            cat_qs = [q for q in prep.get("questions", []) if q.get("category") == cat]
+                            if not cat_qs:
+                                continue
+                            fg, bg = CATEGORY_COLORS.get(cat, ("#374151", "#f3f4f6"))
+                            st.markdown(
+                                f'<div style="background:{bg};color:{fg};padding:4px 12px;'
+                                f'border-radius:6px;font-weight:700;font-size:13px;margin:12px 0 6px 0">'
+                                f'{cat}</div>', unsafe_allow_html=True
+                            )
+                            for q in cat_qs:
+                                reported = ' ● REPORTED' if q.get("reported") else ""
+                                with st.expander(f'{q["question"]}{reported}', expanded=False):
+                                    st.caption(f"💡 {q.get('hint','')}")
+                                    for opt in q.get("answer_options", []):
+                                        st.markdown(
+                                            f'<div style="background:#f8faff;border-left:3px solid #3b82f6;'
+                                            f'padding:8px 12px;border-radius:0 6px 6px 0;margin:4px 0">'
+                                            f'<strong>{opt["angle"]}</strong><br>{opt["outline"]}</div>',
+                                            unsafe_allow_html=True
+                                        )
+
             st.divider()
 
 # ===============================================================
@@ -820,7 +935,8 @@ if page == "search":
 
     if search_btn:
         with st.spinner("Discovering titles from your resume..."):
-            titles_data = discover_titles()
+            perf_ctx = title_performance_context()
+            titles_data = discover_titles(performance_context=perf_ctx)
         all_titles = (
             [t["title"] for t in titles_data["direct_fit"]] +
             [t["title"] for t in titles_data["worth_exploring"]]
