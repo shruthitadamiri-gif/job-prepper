@@ -1,4 +1,5 @@
 import io
+import os
 import re
 from docx import Document
 from docx.shared import Pt, Inches, RGBColor
@@ -178,6 +179,18 @@ KNOWN_SECTION_WORDS = {
 }
 
 
+def _resolve_contact_placeholders(text: str) -> str:
+    """Replace [PHONE] and [EMAIL] with runtime values from secrets/env."""
+    try:
+        import streamlit as st
+        phone = st.secrets.get("CONTACT_PHONE", "") or os.getenv("CONTACT_PHONE", "[PHONE]")
+        email = st.secrets.get("CONTACT_EMAIL", "") or os.getenv("CONTACT_EMAIL", "[EMAIL]")
+    except Exception:
+        phone = os.getenv("CONTACT_PHONE", "[PHONE]")
+        email = os.getenv("CONTACT_EMAIL", "[EMAIL]")
+    return text.replace("[PHONE]", phone).replace("[EMAIL]", email)
+
+
 def resume_to_docx(resume_text: str, name: str = "SHRUTHI TADAMIRI",
                    contact: str = "[PHONE] | [EMAIL] | linkedin.com/in/shruthi-tadamiri | Boston, MA") -> bytes:
     """
@@ -199,7 +212,7 @@ def resume_to_docx(resume_text: str, name: str = "SHRUTHI TADAMIRI",
     doc.styles["Normal"].paragraph_format.space_after = Pt(0)
     doc.styles["Normal"].font.name = FONT_NAME
 
-    _add_name_header(doc, name, contact)
+    _add_name_header(doc, name, _resolve_contact_placeholders(contact))
 
     lines = resume_text.split("\n")
 
