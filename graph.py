@@ -1,4 +1,5 @@
 import os
+import uuid
 from typing import TypedDict, Optional
 from langgraph.graph import StateGraph, END
 from dotenv import load_dotenv
@@ -45,7 +46,8 @@ class JobPrepState(TypedDict):
     eval_result: Optional[dict]
     ats_result: Optional[dict]
     retry_count: int
-    evidence_sources: Optional[list]   # filenames that contributed RAG evidence
+    evidence_sources: Optional[list]
+    session_id: str
     final_output: Optional[dict]
 
 
@@ -59,6 +61,7 @@ def make_initial_state(jd_text: str) -> JobPrepState:
         "ats_result": None,
         "retry_count": 0,
         "evidence_sources": None,
+        "session_id": uuid.uuid4().hex,
         "final_output": None,
     }
 
@@ -69,7 +72,7 @@ def make_initial_state(jd_text: str) -> JobPrepState:
 
 def parse_jd_node(state: JobPrepState) -> JobPrepState:
     print("Parsing job description...")
-    parsed = parse_jd(state["jd_text"])
+    parsed = parse_jd(state["jd_text"], session_id=state["session_id"])
     return {**state, "parsed_jd": parsed}
 
 
@@ -110,12 +113,14 @@ def resume_agent_node(state: JobPrepState) -> JobPrepState:
         output = run_resume_agent(
             state["jd_text"], state["parsed_jd"],
             missing_keywords=missing, current_resume=current,
+            session_id=state["session_id"],
         )
     else:
         print("Tailoring resume with corpus evidence...")
         output = run_resume_agent(
             state["jd_text"], state["parsed_jd"],
             evidence_chunks=evidence_chunks,
+            session_id=state["session_id"],
         )
 
     return {**state, "resume_output": output, "evidence_sources": evidence_sources}
@@ -131,7 +136,8 @@ def evaluator_node(state: JobPrepState) -> JobPrepState:
     print("Running evaluator...")
     source_resume = _load_source_resume()
     eval_result = run_evaluator(
-        state["resume_output"], source_resume, state["jd_text"], state["parsed_jd"]
+        state["resume_output"], source_resume, state["jd_text"], state["parsed_jd"],
+        session_id=state["session_id"],
     )
     return {**state, "eval_result": eval_result}
 

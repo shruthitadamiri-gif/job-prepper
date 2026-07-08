@@ -10,11 +10,13 @@ without touching code.
 
 import os
 import re
+import time
 import yaml
 import anthropic
 from dotenv import load_dotenv
 from tools.llm_json import parse_llm_json
 from tools.visa_check import check_visa_sponsorship
+from tools.usage_logger import log_usage
 
 load_dotenv()
 
@@ -63,6 +65,7 @@ def run_screening(
     company: str = "",
     location: str = "",
     hard_filters: dict | None = None,
+    session_id: str = "unknown",
 ) -> dict:
     """
     Screen a job description for fit before tailoring.
@@ -136,11 +139,14 @@ JOB DESCRIPTION:
 
 Return only the JSON object, no explanation."""
 
+    _model = "claude-haiku-4-5-20251001"
+    _t0 = time.monotonic()
     message = client.messages.create(
-        model="claude-haiku-4-5-20251001",
+        model=_model,
         max_tokens=600,
         messages=[{"role": "user", "content": prompt}]
     )
+    log_usage(session_id, "screening_agent", _model, message, int((time.monotonic() - _t0) * 1000))
 
     result = parse_llm_json(message.content[0].text)
 

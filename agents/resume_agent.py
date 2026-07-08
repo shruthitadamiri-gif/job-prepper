@@ -1,7 +1,9 @@
 import os
+import time
 import anthropic
 from dotenv import load_dotenv
 from tools.jd_parser import parse_jd
+from tools.usage_logger import log_usage
 
 load_dotenv()
 
@@ -58,6 +60,7 @@ def run_resume_agent(
     missing_keywords: list[str] | None = None,
     current_resume: str | None = None,
     evidence_chunks: list[dict] | None = None,
+    session_id: str = "unknown",
 ) -> str:
     """
     Generates a tailored resume for the given JD.
@@ -122,11 +125,14 @@ SOURCE RESUME:
 
 Output only the resume. No commentary, no preamble, no markdown code blocks."""
 
+    _model = "claude-sonnet-4-6"
+    _t0 = time.monotonic()
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=_model,
         max_tokens=1800,
         messages=[{"role": "user", "content": prompt}]
     )
+    log_usage(session_id, "resume_agent", _model, message, int((time.monotonic() - _t0) * 1000))
 
     return message.content[0].text
 

@@ -1,7 +1,9 @@
 import os
+import time
 import anthropic
 from dotenv import load_dotenv
 from tools.llm_json import parse_llm_json
+from tools.usage_logger import log_usage
 
 load_dotenv()
 
@@ -68,11 +70,14 @@ Rules:
 RESUME:
 {resume}"""
 
+    _model = "claude-sonnet-4-6"
+    _t0 = time.monotonic()
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=_model,
         max_tokens=1000,
         messages=[{"role": "user", "content": prompt}]
     )
+    log_usage("discovery", "title_discovery_agent", _model, message, int((time.monotonic() - _t0) * 1000))
 
     return parse_llm_json(message.content[0].text)
 

@@ -65,7 +65,7 @@ for key, default in [
     ("stage", "input"), ("result", None),
     ("approved_resume", None), ("approved_prep", None),
     ("opportunity_id", None), ("history_saved", False), ("page", "search"),
-    ("approved_prep", None),
+    ("approved_prep", None), ("ui_session_id", __import__("uuid").uuid4().hex),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -92,8 +92,8 @@ try:
 except Exception:
     pass
 
-nav_cols = st.columns([1, 1, 1, 4])
-pages = [("🔍 Job Search", "search"), ("🎯 Run Job Prepper", "run"), ("📋 Pipeline", "pipeline")]
+nav_cols = st.columns([1, 1, 1, 1, 3])
+pages = [("🔍 Job Search", "search"), ("🎯 Run Job Prepper", "run"), ("📋 Pipeline", "pipeline"), ("📈 Usage", "usage")]
 for col, (label, key) in zip(nav_cols, pages):
     with col:
         active = st.session_state.page == key
@@ -298,7 +298,7 @@ if page == "run":
             else:
                 from agents.screening_agent import run_screening
                 with st.spinner("Screening role for fit (~5 seconds)..."):
-                    sr = run_screening(jd_text)
+                    sr = run_screening(jd_text, session_id=st.session_state.ui_session_id)
                 st.session_state["_manual_screen_result"] = sr
                 st.session_state["_manual_screen_jd"] = jd_text
                 st.rerun()
@@ -540,6 +540,7 @@ if page == "run":
                             st.session_state.jd_text, parsed_jd,
                             missing_keywords=missing,
                             current_resume=st.session_state.approved_resume,
+                            session_id=st.session_state.ui_session_id,
                         )
                         st.session_state.approved_resume = new_resume
                         st.session_state.result["resume_output"] = new_resume
@@ -858,6 +859,7 @@ if page == "pipeline":
                                 jd_snap, parsed_jd_for_prep,
                                 round=selected_round,
                                 invite_context=invite_ctx,
+                                session_id=st.session_state.ui_session_id,
                             )
                         prep_results[selected_round] = new_prep
                         update_fields(opp_id, {"prep_results": prep_results})
@@ -895,6 +897,64 @@ if page == "pipeline":
                                         )
 
             st.divider()
+
+# ===============================================================
+# PAGE: USAGE
+# ===============================================================
+if page == "usage":
+    from tools.usage_logger import query_usage
+    import pandas as pd
+
+    st.subheader("📈 Usage & Cost")
+
+    data = query_usage()
+    total = data.get("total", {})
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total spend", f"${total.get('cost', 0):.4f}")
+    c2.metric("Total tokens", f"{total.get('tokens', 0):,}")
+    c3.metric("Total calls", total.get("calls", 0))
+
+    st.divider()
+
+    if data["by_agent"]:
+        st.markdown("#### Spend by agent")
+        st.dataframe(
+            pd.DataFrame(data["by_agent"]).rename(columns={
+                "agent_name": "Agent", "calls": "Calls",
+                "tokens": "Tokens", "cost": "Cost ($)"
+            }),
+            use_container_width=True, hide_index=True,
+        )
+
+    if data["avg_latency"]:
+        st.markdown("#### Avg latency by agent (ms)")
+        st.dataframe(
+            pd.DataFrame(data["avg_latency"]).rename(columns={
+                "agent_name": "Agent", "avg_ms": "Avg latency (ms)"
+            }),
+            use_container_width=True, hide_index=True,
+        )
+
+    if data["by_day"]:
+        st.markdown("#### Daily spend — last 30 days")
+        df_day = pd.DataFrame(data["by_day"]).rename(columns={
+            "day": "Date", "cost": "Cost ($)", "calls": "Calls"
+        })
+        st.dataframe(df_day, use_container_width=True, hide_index=True)
+
+    if data["by_session"]:
+        st.markdown("#### Per-session breakdown (last 50)")
+        st.dataframe(
+            pd.DataFrame(data["by_session"]).rename(columns={
+                "session_id": "Session", "started_at": "Started",
+                "calls": "Calls", "tokens": "Tokens", "cost": "Cost ($)"
+            }),
+            use_container_width=True, hide_index=True,
+        )
+
+    if not any([data["by_agent"], data["by_day"], data["by_session"]]):
+        st.info("No usage data yet — run a job prep session to see costs here.")
 
 # ===============================================================
 # PAGE: JOB SEARCH
