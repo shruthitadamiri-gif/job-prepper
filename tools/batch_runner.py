@@ -13,7 +13,8 @@ _graph = build_graph()
 
 def _run_single(job: dict) -> dict:
     """Run the full pipeline for one job via the compiled graph."""
-    jd_text = (
+    # Use full JD snapshot if available (set by screening flow); fall back to snippet
+    jd_text = job.get("_jd_snapshot") or (
         f"{job['title']} at {job['company']}\n\n"
         f"Location: {job.get('location', '')}\n\n"
         f"{job.get('description_snippet', '')}"

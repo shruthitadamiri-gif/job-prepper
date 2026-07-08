@@ -237,9 +237,54 @@ if page == "run":
             )
 
         st.divider()
-        col_run, _ = st.columns([1, 3])
+        col_screen, col_run, _ = st.columns([1, 1, 2])
+        with col_screen:
+            screen_first_btn = st.button("🔍 Screen first (recommended)", use_container_width=True)
         with col_run:
-            run_btn = st.button("Run Job Prepper ↗", type="primary", use_container_width=True)
+            run_btn = st.button("⚡ Skip to tailoring", use_container_width=True, type="primary")
+
+        # Show inline screening result if we just ran one
+        if st.session_state.get("_manual_screen_result") and st.session_state.get("_manual_screen_jd") == jd_text:
+            sr = st.session_state["_manual_screen_result"]
+            verdict = sr.get("verdict", "no_fit")
+            score = sr.get("fit_score", 0)
+            VERDICT_STYLE_M = {
+                "strong_fit": ("✅ Strong fit", "#059669", "#d1fae5"),
+                "borderline":  ("🟡 Borderline",  "#92400e", "#fef3c7"),
+                "no_fit":      ("❌ No fit",       "#dc2626", "#fee2e2"),
+            }
+            label, fg, bg = VERDICT_STYLE_M.get(verdict, ("❓ Unknown", "#374151", "#f3f4f6"))
+            st.markdown(
+                f'<div style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;background:{bg};margin:8px 0">'
+                f'<strong>Screening verdict: {label}</strong> &nbsp; {score}/100<br>'
+                f'<span style="font-size:13px">{sr.get("rationale","")}</span></div>',
+                unsafe_allow_html=True
+            )
+            if sr.get("dealbreakers"):
+                for db in sr["dealbreakers"]:
+                    st.error(f"🚫 {db}")
+            override_col, _ = st.columns([1, 3])
+            with override_col:
+                if st.button("Continue to tailoring anyway →"):
+                    st.session_state.stage = "running"
+                    st.session_state.jd_text = jd_text
+                    st.session_state.role = role
+                    st.session_state.history_saved = False
+                    st.session_state.pop("jd_text_draft", None)
+                    st.session_state.pop("_manual_screen_result", None)
+                    st.session_state.pop("_manual_screen_jd", None)
+                    st.rerun()
+
+        if screen_first_btn:
+            if not jd_text.strip():
+                st.error("Please paste a job description or fetch one from a URL first.")
+            else:
+                from agents.screening_agent import run_screening
+                with st.spinner("Screening role for fit (~5 seconds)..."):
+                    sr = run_screening(jd_text)
+                st.session_state["_manual_screen_result"] = sr
+                st.session_state["_manual_screen_jd"] = jd_text
+                st.rerun()
 
         if run_btn:
             if not jd_text.strip():
@@ -250,6 +295,8 @@ if page == "run":
                 st.session_state.role = role
                 st.session_state.history_saved = False
                 st.session_state.pop("jd_text_draft", None)
+                st.session_state.pop("_manual_screen_result", None)
+                st.session_state.pop("_manual_screen_jd", None)
                 st.rerun()
 
     # -----------------------------------------------------------
@@ -867,104 +914,187 @@ if page == "search":
 
             if selected:
                 st.divider()
-                run_batch_btn = st.button(
-                    f"⚡ Run Job Prepper for {len(selected)} selected role{'s' if len(selected) > 1 else ''} →",
+                screen_btn = st.button(
+                    f"🔍 Screen {len(selected)} selected role{'s' if len(selected) > 1 else ''} →",
                     type="primary"
                 )
-                if run_batch_btn:
-                    st.session_state.js_pending_jobs = [j for j in jobs if _job_key(j) in selected]
+                if screen_btn:
+                    selected_jobs = [j for j in jobs if _job_key(j) in selected]
+                    screening_results = []
+                    progress = st.progress(0, text="Screening roles...")
+                    from agents.screening_agent import run_screening
+                    from tools.jd_fetcher import fetch_jd_from_url
+                    from tools.opportunity_store import create_opportunity, update_stage, update_fields, seen_keys
+                    from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
+
+                    def _screen_one(job):
+                        url = job.get("url", "")
+                        jd_text = (
+                            f"{job['title']} at {job['company']}\n\n"
+                            f"Location: {job.get('location', '')}\n\n"
+                            f"{job.get('description_snippet', '')}"
+                        )
+                        screened_from_snippet = True
+                        if url:
+                            fetch = fetch_jd_from_url(url)
+                            if fetch["success"]:
+                                jd_text = fetch["jd_text"]
+                                screened_from_snippet = False
+                        verdict = run_screening(
+                            jd_text,
+                            company=job.get("company", ""),
+                            location=job.get("location", ""),
+                        )
+                        verdict["screened_from_snippet"] = screened_from_snippet
+                        verdict["_job"] = job
+                        verdict["_jd_text"] = jd_text
+                        return verdict
+
+                    raw_screens = [None] * len(selected_jobs)
+                    with ThreadPoolExecutor(max_workers=3) as executor:
+                        futures = {executor.submit(_screen_one, job): i for i, job in enumerate(selected_jobs)}
+                        done = 0
+                        for future in _as_completed(futures):
+                            idx = futures[future]
+                            try:
+                                raw_screens[idx] = future.result()
+                            except Exception as e:
+                                raw_screens[idx] = {"verdict": "no_fit", "fit_score": 0,
+                                                     "rationale": str(e), "dealbreakers": [str(e)],
+                                                     "matched_strengths": [], "missing_qualifications": [],
+                                                     "visa_status": "unknown", "screened_from_snippet": True,
+                                                     "_job": selected_jobs[idx],
+                                                     "_jd_text": ""}
+                            done += 1
+                            progress.progress(done / len(selected_jobs), text=f"Screened {done}/{len(selected_jobs)}...")
+
+                    # Save each to opportunities
+                    existing_keys = seen_keys()
+                    for sr in raw_screens:
+                        job = sr["_job"]
+                        key = job.get("url") or f"{job.get('title','').lower()}|{job.get('company','').lower()}"
+                        if key not in existing_keys:
+                            try:
+                                opp_id = create_opportunity(
+                                    title=job.get("title", ""),
+                                    company=job.get("company", ""),
+                                    location=job.get("location", ""),
+                                    url=job.get("url", ""),
+                                    searched_title=job.get("searched_title", ""),
+                                    jd_snapshot=sr["_jd_text"],
+                                    source="search",
+                                    stage="discovered",
+                                )
+                                new_stage = "screened_out" if (sr["dealbreakers"] or sr["verdict"] == "no_fit") else "screened_in"
+                                update_stage(opp_id, new_stage)
+                                update_fields(opp_id, {
+                                    "fit_score": sr.get("fit_score"),
+                                    "fit_verdict": sr.get("verdict"),
+                                    "dealbreakers": sr.get("dealbreakers"),
+                                    "visa_status": sr.get("visa_status"),
+                                })
+                                sr["_opp_id"] = opp_id
+                                existing_keys.add(key)
+                            except Exception:
+                                sr["_opp_id"] = None
+                        else:
+                            sr["_opp_id"] = None
+
+                    st.session_state.js_screening_results = raw_screens
+                    st.session_state.js_selected = set()
+                    progress.empty()
+                    st.rerun()
+
+    # ── STEP 3: Screening review ──────────────────────────────────
+    if st.session_state.get("js_screening_results"):
+        screening_results = st.session_state.js_screening_results
+
+        screened_in  = [sr for sr in screening_results if not sr.get("dealbreakers") and sr.get("verdict") != "no_fit"]
+        screened_out = [sr for sr in screening_results if sr.get("dealbreakers") or sr.get("verdict") == "no_fit"]
+        screened_in.sort(key=lambda x: x.get("fit_score", 0), reverse=True)
+
+        st.divider()
+        st.markdown("#### Step 3 — Screening results")
+        st.caption(f"{len(screened_in)} screened in · {len(screened_out)} screened out — sorted by fit score")
+
+        VERDICT_STYLE = {
+            "strong_fit": ("✅ Strong fit", "#059669", "#d1fae5"),
+            "borderline":  ("🟡 Borderline",  "#92400e", "#fef3c7"),
+            "no_fit":      ("❌ No fit",       "#dc2626", "#fee2e2"),
+        }
+
+        def _render_screening_card(sr, card_key_prefix):
+            job = sr["_job"]
+            verdict = sr.get("verdict", "no_fit")
+            score = sr.get("fit_score", 0)
+            label, fg, bg = VERDICT_STYLE.get(verdict, ("❓ Unknown", "#374151", "#f3f4f6"))
+            snippet_warning = " *(screened from snippet only)*" if sr.get("screened_from_snippet") else ""
+
+            st.markdown(
+                f'<div style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;'
+                f'background:{bg};margin-bottom:6px">'
+                f'<strong>{job.get("title","")}</strong> — {job.get("company","")}'
+                f'<span style="float:right;background:white;color:{fg};padding:1px 10px;'
+                f'border-radius:10px;font-size:12px;font-weight:700">{label} · {score}/100</span>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+            st.caption(f'📍 {job.get("location","—")}  {snippet_warning}')
+            st.markdown(f"_{sr.get('rationale', '')}_")
+
+            if sr.get("dealbreakers"):
+                for db in sr["dealbreakers"]:
+                    st.error(f"🚫 {db}")
+
+            col_str, col_miss = st.columns(2)
+            with col_str:
+                if sr.get("matched_strengths"):
+                    st.markdown("**Matched strengths**")
+                    for s in sr["matched_strengths"]:
+                        st.markdown(f"- {s}")
+            with col_miss:
+                if sr.get("missing_qualifications"):
+                    st.markdown("**Missing qualifications**")
+                    for m in sr["missing_qualifications"]:
+                        st.markdown(f"- {m}")
+
+            return job
+
+        # Screened-in cards with tailoring buttons
+        if screened_in:
+            for i, sr in enumerate(screened_in):
+                job = _render_screening_card(sr, f"sin_{i}")
+                c1, c2 = st.columns([1, 3])
+                with c1:
+                    if st.button("⚡ Run tailoring →", key=f"tailor_{i}", type="primary"):
+                        job_with_jd = dict(job)
+                        job_with_jd["_jd_snapshot"] = sr["_jd_text"]
+                        st.session_state.js_pending_jobs = [job_with_jd]
+                        st.session_state.js_screening_results = None
+                        st.session_state.page = "run"
+                        st.rerun()
+                st.divider()
+
+            # Bulk tailoring
+            bulk_col, _ = st.columns([1, 2])
+            with bulk_col:
+                if st.button(f"⚡ Run tailoring for all {len(screened_in)} screened-in →", type="primary"):
+                    jobs_with_jd = []
+                    for sr in screened_in:
+                        j = dict(sr["_job"])
+                        j["_jd_snapshot"] = sr["_jd_text"]
+                        jobs_with_jd.append(j)
+                    st.session_state.js_pending_jobs = jobs_with_jd
+                    st.session_state.js_screening_results = None
                     st.session_state.page = "run"
                     st.rerun()
 
-    # ── STEP 3: Batch results + interview prep selection ─────────
-    if st.session_state.get("js_batch_results"):
-        batch_results = st.session_state.js_batch_results
-
-        st.divider()
-        st.markdown("#### Step 3 — Results")
-        st.caption("Scores are based on your tailored resume vs each role. Select roles for interview prep below.")
-
-        prep_selected = set()
-
-        for i, r in enumerate(batch_results):
-            job = r["job"]
-
-            if "error" in r:
-                st.error(f"**{job['title']} at {job['company']}** — failed: {r['error']}")
-                continue
-
-            ats = r["ats_result"]
-            ev = r["eval_result"]
-            ats_pct = ats["coverage_percent"]
-            rel_score = ev["overall_score"]
-            ats_color = "#059669" if ats_pct >= 70 else "#d97706" if ats_pct >= 50 else "#dc2626"
-            rel_color = "#059669" if rel_score >= 7 else "#d97706" if rel_score >= 5 else "#dc2626"
-
-            col_info, col_ats, col_rel, col_prep = st.columns([4, 1, 1, 1])
-            with col_info:
-                st.markdown(f"**{job['title']}**")
-                st.caption(f"{job['company']} &nbsp;·&nbsp; {job.get('location','')}")
-            with col_ats:
-                st.markdown(f'<div style="text-align:center"><span style="font-size:20px;font-weight:700;color:{ats_color}">{ats_pct}%</span><br><span style="font-size:11px;color:#94a3b8">ATS</span></div>', unsafe_allow_html=True)
-            with col_rel:
-                st.markdown(f'<div style="text-align:center"><span style="font-size:20px;font-weight:700;color:{rel_color}">{rel_score}/10</span><br><span style="font-size:11px;color:#94a3b8">relevance</span></div>', unsafe_allow_html=True)
-            with col_prep:
-                want_prep = st.checkbox("Add prep", key=f"prep_{i}")
-                if want_prep:
-                    prep_selected.add(i)
-
-            with st.expander("📄 View tailored resume & download", expanded=False):
-                st.text_area("Resume", value=r["resume_output"], height=250,
-                             disabled=True, key=f"br_resume_{i}", label_visibility="collapsed")
-                dl1, dl2 = st.columns(2)
-                fname = f"resume_{job['company'].lower().replace(' ','_')}.docx"
-                with dl1:
-                    st.download_button("📥 .txt", data=r["resume_output"],
-                                       file_name=fname.replace(".docx", ".txt"),
-                                       mime="text/plain", key=f"br_txt_{i}",
-                                       use_container_width=True)
-                with dl2:
-                    st.download_button("📥 .docx", data=resume_to_docx(r["resume_output"]),
-                                       file_name=fname, mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                       key=f"br_docx_{i}", use_container_width=True)
-            st.divider()
-
-        # ── STEP 4: Interview prep ────────────────────────────────
-        if prep_selected:
-            st.markdown("#### Step 4 — Interview Prep")
-            run_prep_btn = st.button(
-                f"🎯 Run Interview Prep for {len(prep_selected)} selected role{'s' if len(prep_selected) > 1 else ''}",
-                type="primary"
-            )
-            if run_prep_btn:
-                for idx in sorted(prep_selected):
-                    r = batch_results[idx]
-                    with st.spinner(f"Building prep guide for {r['job']['title']} at {r['job']['company']}..."):
-                        updated = run_prep_for_result(r)
-                        st.session_state.js_batch_results[idx] = updated
-                st.rerun()
-
-        # Show any prep that's already been generated
-        for i, r in enumerate(batch_results):
-            if r.get("prep_output"):
-                job = r["job"]
-                st.markdown(f"### 🎯 Interview Prep — {job['title']} at {job['company']}")
-                prep = r["prep_output"]
-                for t in prep.get("prep_topics", []):
-                    with st.expander(f"**{t['title']}**", expanded=False):
-                        st.markdown(f"**Why it matters:** {t['why_it_matters']}")
-                        st.markdown(f"**What to prepare:** {t['what_to_prepare']}")
-                for q in prep.get("questions", []):
-                    with st.expander(q["question"], expanded=False):
-                        st.caption(f"💡 {q['hint']}")
-                        for opt in q.get("answer_options", []):
-                            st.markdown(
-                                f'<div style="background:#f8faff;border-left:3px solid #3b82f6;'
-                                f'padding:10px 14px;border-radius:0 6px 6px 0;margin:6px 0">'
-                                f'<strong>{opt["angle"]}</strong><br>{opt["outline"]}</div>',
-                                unsafe_allow_html=True
-                            )
-                st.divider()
+        # Screened-out collapsed
+        if screened_out:
+            with st.expander(f"❌ {len(screened_out)} screened out (expand to review for false negatives)", expanded=False):
+                for i, sr in enumerate(screened_out):
+                    _render_screening_card(sr, f"sout_{i}")
+                    st.divider()
 
         # ── Titles used ───────────────────────────────────────────
         with st.expander("🔎 Titles searched by AI", expanded=False):
