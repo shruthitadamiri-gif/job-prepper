@@ -24,6 +24,29 @@ from graph import build_graph
 # ---------------------------------------------------------------
 st.set_page_config(page_title="Job Prepper", page_icon="🎯", layout="wide")
 
+# ---------------------------------------------------------------
+# PASSWORD GATE
+# ---------------------------------------------------------------
+def _get_app_password() -> str:
+    try:
+        return st.secrets["APP_PASSWORD"]
+    except Exception:
+        return os.getenv("APP_PASSWORD", "")
+
+_expected_pw = _get_app_password()
+if not _expected_pw:
+    st.error("APP_PASSWORD is not configured. Set it in Streamlit secrets or your .env file.")
+    st.stop()
+
+if not st.session_state.get("_authenticated"):
+    pw = st.text_input("Enter password to access Job Prepper", type="password")
+    if pw == _expected_pw:
+        st.session_state["_authenticated"] = True
+        st.rerun()
+    elif pw:
+        st.error("Incorrect password.")
+    st.stop()
+
 st.markdown("""
 <style>
     .main { max-width: 900px; }
