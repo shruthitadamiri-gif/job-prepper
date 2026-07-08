@@ -1,8 +1,8 @@
 import os
-import json
 import anthropic
 from dotenv import load_dotenv
 from tools.web_search import search_interview_questions
+from tools.llm_json import parse_llm_json
 
 load_dotenv()
 
@@ -85,9 +85,7 @@ Requirements:
         messages=[{"role": "user", "content": prompt}]
     )
 
-    raw = message.content[0].text.strip()
-    raw = raw.replace("```json", "").replace("```", "").strip()
-    return json.loads(raw)
+    return parse_llm_json(message.content[0].text)
 
 
 if __name__ == "__main__":
