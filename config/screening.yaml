@@ -4,16 +4,20 @@
 # Acceptable location strings — case-insensitive substring match against the JD location field.
 # A job passes if any of these appear in its location (or if no location is listed).
 location_ok:
-  - Boston
   - Remote
   - Hybrid
-  - New York
-  - NYC
   - San Francisco
   - SF
-  - Seattle
-  - Chicago
-  - Austin
+  - Bay Area
+  - San Jose
+  - Oakland
+  - Palo Alto
+  - Mountain View
+  - Menlo Park
+  - Sunnyvale
+  - Santa Clara
+  - Redwood City
+  - South Bay
 
 # Minimum seniority level to screen in.
 # Options: junior, mid, senior, staff, principal, director

@@ -972,8 +972,8 @@ if page == "search":
     c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
     with c1:
         st.caption("📍 Location")
-        location = st.text_input("loc", value="Boston, MA", label_visibility="collapsed",
-                                  placeholder="e.g. Boston, MA or Remote")
+        location = st.text_input("loc", value="San Francisco, CA", label_visibility="collapsed",
+                                  placeholder="e.g. San Francisco, CA or Remote")
     with c2:
         st.caption("📅 Posted within")
         days_back = st.selectbox("days", [7, 14, 30], index=2,
