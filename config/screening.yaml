@@ -1,0 +1,32 @@
+# Screening agent hard filters
+# Edit this file to change what gets screened in/out without touching code.
+
+# Acceptable location strings — case-insensitive substring match against the JD location field.
+# A job passes if any of these appear in its location (or if no location is listed).
+location_ok:
+  - Boston
+  - Remote
+  - Hybrid
+  - New York
+  - NYC
+  - San Francisco
+  - SF
+  - Seattle
+  - Chicago
+  - Austin
+
+# Minimum seniority level to screen in.
+# Options: junior, mid, senior, staff, principal, director
+min_seniority: mid
+
+# Minimum compensation (annual, USD). Leave as null to skip the check.
+# Only applied when the JD explicitly states compensation.
+comp_floor: null
+
+# Keywords that are automatic dealbreakers regardless of LLM verdict.
+# Case-insensitive substring match against the full JD text.
+dealbreaker_keywords:
+  - "Top Secret clearance"
+  - "TS/SCI"
+  - "security clearance required"
+  - "active clearance"
