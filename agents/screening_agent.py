@@ -40,12 +40,13 @@ def _load_config() -> dict:
         return {}
 
 
-def _check_hard_filters(jd_text: str, location: str, config: dict) -> list[str]:
+def _check_hard_filters(jd_text: str, location: str, company: str, config: dict) -> list[str]:
     """Returns a list of dealbreaker strings triggered by hard filters."""
     dealbreakers = []
 
-    # Dealbreaker keywords
     jd_lower = jd_text.lower()
+
+    # Dealbreaker keywords
     for kw in config.get("dealbreaker_keywords", []):
         if kw.lower() in jd_lower:
             dealbreakers.append(f"Dealbreaker keyword in JD: '{kw}'")
@@ -56,6 +57,20 @@ def _check_hard_filters(jd_text: str, location: str, config: dict) -> list[str]:
         loc_lower = location.lower()
         if ok_locations and not any(ok in loc_lower for ok in ok_locations):
             dealbreakers.append(f"Location '{location}' not in acceptable locations list")
+
+    # Staffing / recruiting agency detection
+    if config.get("flag_staffing", False):
+        company_lower = company.lower()
+        for name in config.get("staffing_company_names", []):
+            if name.lower() in company_lower:
+                dealbreakers.append(f"Staffing/recruiting firm detected: company name matches '{name}'")
+                break
+
+        if not any("Staffing" in d for d in dealbreakers):
+            for signal in config.get("staffing_jd_signals", []):
+                if signal.lower() in jd_lower:
+                    dealbreakers.append(f"Staffing/agency signal in JD: '{signal}'")
+                    break
 
     return dealbreakers
 
@@ -94,8 +109,8 @@ def run_screening(
         visa_status = "unknown"
         visa_headline = f"Visa check failed: {e}"
 
-    # 2. Hard filter checks (location, keywords)
-    hard_dealbreakers = _check_hard_filters(jd_text, location, config)
+    # 2. Hard filter checks (location, keywords, staffing)
+    hard_dealbreakers = _check_hard_filters(jd_text, location, company, config)
 
     # 3. LLM screening call (Haiku)
     min_seniority = config.get("min_seniority", "mid")

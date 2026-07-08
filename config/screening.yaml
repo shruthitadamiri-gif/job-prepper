@@ -30,3 +30,61 @@ dealbreaker_keywords:
   - "TS/SCI"
   - "security clearance required"
   - "active clearance"
+
+# Staffing / recruiting agency detection.
+# Set flag_staffing: true to screen out roles posted by staffing companies.
+# Matches against company name AND JD text (signals like "W2", "C2C", "contract role").
+flag_staffing: true
+
+# Known staffing/recruiting firm name fragments (case-insensitive, matched against company name).
+staffing_company_names:
+  - Randstad
+  - Robert Half
+  - Hays
+  - Kforce
+  - TEKsystems
+  - Insight Global
+  - Apex Systems
+  - Modis
+  - Staffmark
+  - Aerotek
+  - Kelly Services
+  - ManpowerGroup
+  - Manpower
+  - Adecco
+  - Volt
+  - Talentify
+  - CyberCoders
+  - Motion Recruitment
+  - Hired
+  - Jobot
+  - Dice
+  - Experis
+  - Infosys BPM
+  - Wipro
+  - HCL
+  - Cognizant Staffing
+  - Mastech
+  - iGate
+  - Collabera
+  - Yoh
+  - Staffing Solutions
+  - Staffing Group
+  - Recruiting Solutions
+  - Talent Solutions
+
+# JD text signals that suggest a staffing posting (case-insensitive substring match).
+staffing_jd_signals:
+  - "W2 only"
+  - "W-2 only"
+  - "C2C"
+  - "corp to corp"
+  - "contract to hire"
+  - "contract role"
+  - "contract position"
+  - "staffing agency"
+  - "our client is"
+  - "on behalf of our client"
+  - "placed at our client"
+  - "recruiting firm"
+  - "right to represent"
