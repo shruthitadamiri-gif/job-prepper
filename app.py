@@ -12,7 +12,7 @@ from tools.docx_export import resume_to_docx
 from tools.jd_fetcher import fetch_jd_from_url
 from tools.history_store import save_entry, load_history, set_applied, delete_entry
 from agents.title_discovery_agent import discover_titles
-from tools.job_search import search_all_titles
+from tools.job_search import search_all_titles, job_key as _job_key
 from tools.batch_runner import run_batch, run_prep_for_result
 from graph import build_graph, make_initial_state
 
@@ -672,6 +672,11 @@ if page == "search":
         search_btn = st.button("🔍 Search", type="primary", use_container_width=True,
                                 disabled=not has_serpapi)
 
+    custom_title = st.text_input(
+        "➕ Add your own title",
+        placeholder="e.g. AI Solutions Architect (appended to AI-discovered titles)",
+    )
+
     if search_btn:
         with st.spinner("Discovering titles from your resume..."):
             titles_data = discover_titles()
@@ -679,19 +684,25 @@ if page == "search":
             [t["title"] for t in titles_data["direct_fit"]] +
             [t["title"] for t in titles_data["worth_exploring"]]
         )
+        if custom_title.strip():
+            all_titles.append(custom_title.strip())
+
         with st.spinner(f"Searching {len(all_titles)} titles on Google Jobs (LinkedIn, Indeed + more)..."):
             raw_results = search_all_titles(all_titles, location=location, days_back=days_back)
 
         all_jobs_flat = []
-        for title, jobs in raw_results.items():
-            for job in jobs:
+        for title, jobs_for_title in raw_results.items():
+            for job in jobs_for_title:
                 job["searched_title"] = title
-            all_jobs_flat.extend(jobs)
+            all_jobs_flat.extend(jobs_for_title)
+
+        # Sort globally by title_match so highest-confidence results surface first
+        all_jobs_flat.sort(key=lambda j: j.get("title_match", 0), reverse=True)
 
         st.session_state.js_jobs = all_jobs_flat
         st.session_state.js_titles_meta = titles_data
         st.session_state.js_source_filter = source_filter
-        st.session_state.js_selected = set()
+        st.session_state.js_selected = set()   # stores stable job_key strings
         st.session_state.js_batch_results = None
         st.rerun()
 
@@ -702,39 +713,56 @@ if page == "search":
         jobs = [j for j in all_jobs if active_filter == "All" or active_filter.lower() in j.get("via", "").lower()]
 
         st.divider()
-        st.markdown(f"#### Step 2 — Select roles to run Job Prepper on")
-        st.caption(f"{len(jobs)} jobs found — check the ones you want to analyse")
+        st.markdown("#### Step 2 — Select roles to run Job Prepper on")
+        st.caption(f"{len(jobs)} jobs found — sorted by title match score, check the ones you want to analyse")
 
         if not jobs:
             st.info("No jobs found. Try a wider date range or 'All' sources.")
         else:
-            selected = st.session_state.get("js_selected", set())
+            # Selection keyed by stable job identity, not integer index —
+            # so changing the source filter doesn't remap checked boxes to wrong jobs
+            selected: set = st.session_state.get("js_selected", set())
 
             for i, job in enumerate(jobs):
+                jk = _job_key(job)
                 remote_badge = "🌐 Remote &nbsp;" if job.get("is_remote") else ""
-                via = f' <span style="background:#ede9fe;color:#6d28d9;padding:1px 7px;border-radius:8px;font-size:11px">{job["via"]}</span>' if job.get("via") else ""
+                via = (
+                    f' <span style="background:#ede9fe;color:#6d28d9;padding:1px 7px;'
+                    f'border-radius:8px;font-size:11px">{job["via"]}</span>'
+                    if job.get("via") else ""
+                )
+                tm = job.get("title_match", 0)
+                tm_color = "#059669" if tm >= 75 else "#d97706" if tm >= 50 else "#dc2626"
+                tm_badge = (
+                    f'<span style="background:#f1f5f9;color:{tm_color};padding:1px 7px;'
+                    f'border-radius:8px;font-size:11px;font-weight:700">'
+                    f'match {tm}%</span>'
+                )
 
                 col_chk, col_info = st.columns([0.5, 9])
                 with col_chk:
-                    checked = st.checkbox("", key=f"sel_{i}", value=(i in selected))
+                    checked = st.checkbox("", key=f"sel_{i}", value=(jk in selected))
                     if checked:
-                        selected.add(i)
+                        selected.add(jk)
                     else:
-                        selected.discard(i)
+                        selected.discard(jk)
                 with col_info:
                     title_html = (
-                        f'<a href="{job["url"]}" target="_blank" style="font-size:15px;font-weight:700;color:#1e293b;text-decoration:none">'
+                        f'<a href="{job["url"]}" target="_blank" style="font-size:15px;'
+                        f'font-weight:700;color:#1e293b;text-decoration:none">'
                         f'{job["title"]} ↗</a>'
                         if job.get("url") else
                         f'<strong style="font-size:15px">{job["title"]}</strong>'
                     )
                     st.markdown(
-                        f'<div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;background:#fafbff;margin-bottom:4px">'
-                        f'{title_html}{via}<br>'
+                        f'<div style="border:1px solid #e2e8f0;border-radius:8px;'
+                        f'padding:10px 14px;background:#fafbff;margin-bottom:4px">'
+                        f'{title_html} {tm_badge}{via}<br>'
                         f'<span style="color:#475569;font-size:13px">{job["company"]}</span>'
                         f' <span style="color:#cbd5e1">·</span> '
-                        f'<span style="color:#94a3b8;font-size:12px">{remote_badge}📍{job["location"] or "—"} &nbsp;·&nbsp; 📅{job["date_posted"]}</span>'
-                        f'</div>',
+                        f'<span style="color:#94a3b8;font-size:12px">'
+                        f'{remote_badge}📍{job["location"] or "—"} &nbsp;·&nbsp; 📅{job["date_posted"]}'
+                        f'</span></div>',
                         unsafe_allow_html=True
                     )
                     if job.get("description_snippet"):
@@ -750,7 +778,7 @@ if page == "search":
                     type="primary"
                 )
                 if run_batch_btn:
-                    st.session_state.js_pending_jobs = [jobs[i] for i in sorted(selected)]
+                    st.session_state.js_pending_jobs = [j for j in jobs if _job_key(j) in selected]
                     st.session_state.page = "run"
                     st.rerun()
 
