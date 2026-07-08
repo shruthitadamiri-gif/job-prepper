@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import anthropic as _anthropic
 from graph import build_graph, make_initial_state
 from agents.prep_agent import run_prep_agent
 
@@ -17,7 +18,13 @@ def _run_single(job: dict) -> dict:
         f"Location: {job.get('location', '')}\n\n"
         f"{job.get('description_snippet', '')}"
     )
-    result = _graph.invoke(make_initial_state(jd_text))
+    try:
+        result = _graph.invoke(make_initial_state(jd_text))
+    except _anthropic.RateLimitError:
+        return {"job": job, "error": "Rate limited — rerun this job individually"}
+    except _anthropic.APIStatusError as e:
+        return {"job": job, "error": f"API error ({e.status_code}) — rerun this job individually"}
+
     return {
         "job": job,
         "jd_text": jd_text,

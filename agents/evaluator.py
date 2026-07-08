@@ -5,7 +5,7 @@ from tools.llm_json import parse_llm_json
 
 load_dotenv()
 
-client = anthropic.Anthropic()
+client = anthropic.Anthropic(max_retries=4)
 
 
 def run_evaluator(

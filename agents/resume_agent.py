@@ -5,7 +5,7 @@ from tools.jd_parser import parse_jd
 
 load_dotenv()
 
-client = anthropic.Anthropic()
+client = anthropic.Anthropic(max_retries=4)
 
 RESUME_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resume.txt")
 
