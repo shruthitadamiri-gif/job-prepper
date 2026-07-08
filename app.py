@@ -5,19 +5,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import json
 from datetime import datetime
-from tools.jd_parser import parse_jd
 from agents.resume_agent import run_resume_agent
 from agents.prep_agent import run_prep_agent
-from agents.evaluator import run_evaluator
 from agents.ats_agent import run_ats_agent
 from tools.docx_export import resume_to_docx
 from tools.jd_fetcher import fetch_jd_from_url
-from tools.visa_check import check_visa_sponsorship
 from tools.history_store import save_entry, load_history, set_applied, delete_entry
 from agents.title_discovery_agent import discover_titles
 from tools.job_search import search_all_titles
 from tools.batch_runner import run_batch, run_prep_for_result
-from graph import build_graph
+from graph import build_graph, make_initial_state
 
 # ---------------------------------------------------------------
 # PAGE CONFIG
@@ -246,57 +243,60 @@ if page == "run":
     elif st.session_state.stage == "running":
 
         st.subheader("Running your agentic job prep system...")
-        st.caption("Six steps — visa check first, then five agents. Takes about 60–90 seconds.")
+        st.caption("Visa check + resume tailoring + ATS analysis + quality evaluation. Takes about 60–90 seconds.")
+
+        # Progress mapped to node completions from the LangGraph stream
+        NODE_PROGRESS = {
+            "parse_jd":        (15, "🔍 Parsing job description..."),
+            "visa_check":      (30, "🛂 Checking visa sponsorship eligibility..."),
+            "resume_agent":    (55, "📝 Tailoring your resume..."),
+            "ats_agent":       (75, "🧩 Checking ATS keyword coverage..."),
+            "evaluator":       (90, "⚖️ Evaluating quality..."),
+            "increment_retry": (55, "🔄 Quality check failed — regenerating resume with ATS feedback..."),
+            "package_output":  (100, "✅ Packaging results..."),
+        }
 
         progress = st.progress(0)
         status = st.empty()
+        visa_placeholder = st.empty()
 
         try:
-            status.info("🔍 Step 1/6 — Parsing job description...")
-            progress.progress(8)
-            parsed_jd = parse_jd(st.session_state.jd_text)
-            progress.progress(16)
+            graph = build_graph()
+            final_state = None
 
-            status.info("🛂 Step 2/6 — Checking visa sponsorship eligibility...")
-            company = parsed_jd.get("company", "this company")
-            visa_result = check_visa_sponsorship(st.session_state.jd_text, company)
-            progress.progress(24)
+            for event in graph.stream(make_initial_state(st.session_state.jd_text)):
+                for node_name, node_state in event.items():
+                    pct, msg = NODE_PROGRESS.get(node_name, (50, f"Running {node_name}..."))
+                    progress.progress(pct)
+                    status.info(msg)
+                    final_state = node_state
 
-            _visa_msg = f"**{visa_result['headline']}**\n\n{visa_result['detail']}"
-            if visa_result["color"] == "success":
-                st.success(_visa_msg)
-            elif visa_result["color"] == "error":
-                st.error(_visa_msg)
-            elif visa_result["color"] == "info":
-                st.info(_visa_msg)
-            else:
-                st.warning(_visa_msg)
-
-            status.info("📝 Step 3/5 — Tailoring your resume...")
-            resume_output = run_resume_agent(st.session_state.jd_text, parsed_jd)
-            progress.progress(55)
-
-            status.info("⚖️ Step 4/5 — Evaluating quality...")
-            eval_result = run_evaluator(
-                resume_output, "", st.session_state.jd_text, parsed_jd
-            )
-            progress.progress(80)
-
-            status.info("🧩 Step 5/5 — Checking ATS keyword coverage...")
-            ats_result = run_ats_agent(resume_output, parsed_jd)
-            progress.progress(100)
+                    # Show visa banner as soon as it's ready
+                    if node_name == "visa_check":
+                        visa_result = node_state.get("visa_result", {})
+                        if visa_result:
+                            _msg = f"**{visa_result['headline']}**\n\n{visa_result['detail']}"
+                            color = visa_result.get("color", "warning")
+                            if color == "success":
+                                visa_placeholder.success(_msg)
+                            elif color == "error":
+                                visa_placeholder.error(_msg)
+                            elif color == "info":
+                                visa_placeholder.info(_msg)
+                            else:
+                                visa_placeholder.warning(_msg)
 
             st.session_state.result = {
-                "parsed_jd": parsed_jd,
-                "resume_output": resume_output,
+                "parsed_jd": final_state["parsed_jd"],
+                "resume_output": final_state["resume_output"],
                 "prep_output": None,
-                "eval_result": eval_result,
-                "visa_result": visa_result,
-                "ats_result": ats_result,
+                "eval_result": final_state["eval_result"],
+                "visa_result": final_state["visa_result"],
+                "ats_result": final_state["ats_result"],
             }
-            st.session_state.approved_resume = resume_output
+            st.session_state.approved_resume = final_state["resume_output"]
             st.session_state.approved_prep = None
-            st.session_state.original_ats_result = ats_result
+            st.session_state.original_ats_result = final_state["ats_result"]
             st.session_state.stage = "review"
             status.success("Done! Reviewing your results...")
             st.rerun()
