@@ -428,6 +428,9 @@ if page == "run":
 
         with tab1:
             st.markdown("**Review and edit your tailored resume below. Approve when ready.**")
+            evidence_sources = result.get("evidence_sources") or []
+            if evidence_sources:
+                st.caption("Career corpus evidence used: " + ", ".join(evidence_sources))
             edited_resume = st.text_area(
                 "Tailored resume",
                 value=st.session_state.approved_resume,

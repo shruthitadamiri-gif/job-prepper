@@ -7,6 +7,7 @@ from agents.resume_agent import run_resume_agent
 from agents.evaluator import run_evaluator
 from agents.ats_agent import run_ats_agent
 from tools.visa_check import check_visa_sponsorship
+from tools.resume_retriever import retrieve_relevant_chunks, build_query_from_jd
 
 load_dotenv()
 
@@ -44,6 +45,7 @@ class JobPrepState(TypedDict):
     eval_result: Optional[dict]
     ats_result: Optional[dict]
     retry_count: int
+    evidence_sources: Optional[list]   # filenames that contributed RAG evidence
     final_output: Optional[dict]
 
 
@@ -56,6 +58,7 @@ def make_initial_state(jd_text: str) -> JobPrepState:
         "eval_result": None,
         "ats_result": None,
         "retry_count": 0,
+        "evidence_sources": None,
         "final_output": None,
     }
 
@@ -86,6 +89,20 @@ def visa_check_node(state: JobPrepState) -> JobPrepState:
 
 def resume_agent_node(state: JobPrepState) -> JobPrepState:
     retry_count = state.get("retry_count", 0)
+
+    # Retrieve corpus evidence on the first pass only (retries reuse cached sources)
+    evidence_chunks = None
+    evidence_sources = state.get("evidence_sources")
+    if retry_count == 0:
+        try:
+            query = build_query_from_jd(state["parsed_jd"] or {})
+            evidence_chunks = retrieve_relevant_chunks(query, top_k=8)
+            evidence_sources = sorted({c["source"] for c in evidence_chunks})
+            print(f"Retrieved {len(evidence_chunks)} chunks from: {evidence_sources}")
+        except Exception as e:
+            print(f"RAG retrieval failed (continuing without evidence): {e}")
+            evidence_chunks = None
+
     if retry_count > 0:
         missing = (state.get("ats_result") or {}).get("missing_keywords", [])
         current = state.get("resume_output")
@@ -95,9 +112,13 @@ def resume_agent_node(state: JobPrepState) -> JobPrepState:
             missing_keywords=missing, current_resume=current,
         )
     else:
-        print("Tailoring resume...")
-        output = run_resume_agent(state["jd_text"], state["parsed_jd"])
-    return {**state, "resume_output": output}
+        print("Tailoring resume with corpus evidence...")
+        output = run_resume_agent(
+            state["jd_text"], state["parsed_jd"],
+            evidence_chunks=evidence_chunks,
+        )
+
+    return {**state, "resume_output": output, "evidence_sources": evidence_sources}
 
 
 def ats_agent_node(state: JobPrepState) -> JobPrepState:

@@ -57,13 +57,17 @@ def run_resume_agent(
     parsed_jd: dict,
     missing_keywords: list[str] | None = None,
     current_resume: str | None = None,
+    evidence_chunks: list[dict] | None = None,
 ) -> str:
     """
     Generates a tailored resume for the given JD.
 
-    On first run, uses resume.txt as the source.
-    On regeneration, uses current_resume as the base so coverage
-    improvements are cumulative rather than starting from scratch.
+    On first run, uses resume.txt as the source. evidence_chunks (retrieved
+    from the career corpus) are injected as supplementary evidence to help
+    the LLM write stronger, more specific bullets.
+
+    On regeneration, uses current_resume as the base so coverage improvements
+    are cumulative. evidence_chunks are not re-retrieved on retry.
 
     missing_keywords: ATS gap keywords to weave in (from latest ATS result).
     """
@@ -83,18 +87,32 @@ Missing keywords:
     else:
         ats_section = ""
 
+    if evidence_chunks:
+        evidence_lines = []
+        for chunk in evidence_chunks:
+            evidence_lines.append(f"[Source: {chunk['source']}]\n{chunk['text']}")
+        evidence_section = (
+            "\nADDITIONAL EVIDENCE from the candidate's project history:\n"
+            "Use these to strengthen and specify bullets where they apply truthfully.\n"
+            "Never invent claims not present in the source resume or evidence below.\n\n"
+            + "\n\n".join(evidence_lines)
+            + "\n"
+        )
+    else:
+        evidence_section = ""
+
     prompt = f"""You are an expert resume writer specializing in AI/ML product roles.
 
 TASK: Rewrite the resume below to be a stronger match for this job description.
 
 STRICT CONTENT RULES:
-- Only use facts, experiences, and metrics already present in the source resume
+- Only use facts, experiences, and metrics already present in the source resume or the additional evidence below
 - Never invent experience, metrics, titles, or skills
 - Mirror the language and keywords from the JD where truthful
 - Lead every bullet with a metric or outcome where one exists in the source
 - Reorder bullets within each role so the most JD-relevant ones come first
 - Keep ALL companies and roles — do not drop any position
-{ats_section}
+{ats_section}{evidence_section}
 {FORMAT_RULES}
 JOB DESCRIPTION:
 {jd_text}

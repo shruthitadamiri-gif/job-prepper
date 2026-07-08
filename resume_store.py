@@ -1,89 +1,133 @@
+"""
+Career corpus indexer.
+
+Indexes every .md and .txt file in career_corpus/ plus resume.txt into
+ChromaDB, with per-chunk source metadata so retrieval can report which
+files contributed evidence.
+
+Hash-based auto-rebuild: if any corpus file is added, edited, or deleted
+the next retrieval call triggers a full rebuild automatically.
+
+Run directly to force a rebuild:
+    python3 resume_store.py
+"""
+
 import os
+import glob
+import hashlib
 import chromadb
-from sentence_transformers import SentenceTransformer
-from dotenv import load_dotenv
 
-load_dotenv()
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+CORPUS_DIR = os.path.join(PROJECT_ROOT, "career_corpus")
+RESUME_PATH = os.path.join(PROJECT_ROOT, "resume.txt")
+CHROMA_PATH = os.path.join(PROJECT_ROOT, "chroma_db")
+HASH_PATH = os.path.join(CHROMA_PATH, "corpus_hash.txt")
+COLLECTION_NAME = "career_corpus"
 
-# ---------------------------------------------------------------
-# YOUR RESUME — edit resume.txt whenever your resume changes,
-# then re-run: python3 resume_store.py
-# The vector database will rebuild automatically.
-# ---------------------------------------------------------------
-RESUME_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resume.txt")
 
-def load_resume_text() -> str:
-    with open(RESUME_PATH, "r") as f:
-        return f.read()
+def all_corpus_files() -> list[str]:
+    """All .md and .txt files in career_corpus/ plus resume.txt, sorted for stability."""
+    files = glob.glob(os.path.join(CORPUS_DIR, "**", "*.md"), recursive=True)
+    files += glob.glob(os.path.join(CORPUS_DIR, "**", "*.txt"), recursive=True)
+    files.append(RESUME_PATH)
+    return sorted(files)
 
-# ---------------------------------------------------------------
-# No need to edit anything below this line
-# ---------------------------------------------------------------
 
-def chunk_resume(text, chunk_size=300):
-    """Split resume into overlapping chunks for better retrieval."""
+def corpus_hash() -> str:
+    """MD5 over all corpus file paths + contents. Any change triggers a rebuild."""
+    h = hashlib.md5()
+    for path in all_corpus_files():
+        h.update(path.encode())
+        try:
+            with open(path, "rb") as f:
+                h.update(f.read())
+        except FileNotFoundError:
+            pass
+    return h.hexdigest()
+
+
+def stored_hash() -> str:
+    try:
+        with open(HASH_PATH) as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return ""
+
+
+def needs_rebuild() -> bool:
+    return stored_hash() != corpus_hash()
+
+
+def _chunk_text(text: str, chunk_size: int = 300, overlap: int = 50) -> list[str]:
     words = text.split()
     chunks = []
-    for i in range(0, len(words), chunk_size - 50):
-        chunk = " ".join(words[i:i + chunk_size])
+    for i in range(0, max(1, len(words)), chunk_size - overlap):
+        chunk = " ".join(words[i : i + chunk_size])
         if chunk.strip():
             chunks.append(chunk)
     return chunks
 
-def build_resume_store():
-    """Embed resume chunks and store in ChromaDB."""
-    print("Loading embedding model...")
-    model = SentenceTransformer("all-MiniLM-L6-v2")
 
-    print("Chunking resume...")
-    chunks = chunk_resume(load_resume_text())
-    print(f"Created {len(chunks)} chunks")
+def _rel_source(path: str) -> str:
+    return os.path.relpath(path, PROJECT_ROOT)
 
-    print("Setting up ChromaDB...")
-    chroma_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_db")
-    client = chromadb.PersistentClient(path=chroma_path)
 
-    # Delete existing collection if rebuilding
+def build_corpus_store() -> None:
+    """
+    Index all corpus files into ChromaDB. Stores source filename as metadata
+    on every chunk so retrieval can report which files contributed evidence.
+    """
+    # Import here to avoid circular dependency (resume_retriever imports us)
+    from tools.resume_retriever import _get_model
+
+    print("Building career corpus index...")
+    model = _get_model()
+
+    os.makedirs(CHROMA_PATH, exist_ok=True)
+    client = chromadb.PersistentClient(path=CHROMA_PATH)
+
     try:
-        client.delete_collection("resume")
-    except:
+        client.delete_collection(COLLECTION_NAME)
+    except Exception:
         pass
 
-    collection = client.create_collection("resume")
+    collection = client.create_collection(COLLECTION_NAME)
 
-    print("Embedding and storing chunks...")
-    embeddings = model.encode(chunks).tolist()
+    texts, metadatas, ids = [], [], []
+    chunk_idx = 0
 
-    collection.add(
-        documents=chunks,
-        embeddings=embeddings,
-        ids=[f"chunk_{i}" for i in range(len(chunks))]
-    )
+    for path in all_corpus_files():
+        try:
+            with open(path) as f:
+                content = f.read()
+        except Exception as e:
+            print(f"  Skipping {_rel_source(path)}: {e}")
+            continue
 
-    print(f"\nDone! {len(chunks)} chunks stored in ChromaDB.")
-    return collection
+        source = _rel_source(path)
+        chunks = _chunk_text(content)
+        print(f"  {source}: {len(chunks)} chunk(s)")
 
-def retrieve_relevant_chunks(query, top_k=5):
-    """Retrieve the most relevant resume chunks for a given JD query."""
-    model = SentenceTransformer("all-MiniLM-L6-v2")
-    chroma_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_db")
-    client = chromadb.PersistentClient(path=chroma_path)
-    collection = client.get_collection("resume")
+        for chunk in chunks:
+            texts.append(chunk)
+            metadatas.append({"source": source})
+            ids.append(f"chunk_{chunk_idx}")
+            chunk_idx += 1
 
-    query_embedding = model.encode([query]).tolist()
-    results = collection.query(
-        query_embeddings=query_embedding,
-        n_results=top_k
-    )
+    if texts:
+        embeddings = model.encode(texts).tolist()
+        collection.add(
+            documents=texts,
+            embeddings=embeddings,
+            metadatas=metadatas,
+            ids=ids,
+        )
 
-    return results["documents"][0]
+    with open(HASH_PATH, "w") as f:
+        f.write(corpus_hash())
+
+    print(f"Done — {chunk_idx} chunks from {len(all_corpus_files())} files.")
+
 
 if __name__ == "__main__":
-    build_resume_store()
-
-    # Quick test — make sure retrieval is working
-    print("\nTesting retrieval...")
-    test_query = "AI product manager machine learning agentic systems"
-    chunks = retrieve_relevant_chunks(test_query)
-    print(f"Top chunk retrieved:\n{chunks[0][:300]}...")
-    print("\nResume store is ready.")
+    build_corpus_store()
