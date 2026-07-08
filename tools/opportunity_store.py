@@ -112,6 +112,42 @@ def list_opportunities(stage: str | None = None) -> list[dict]:
     return resp.data or []
 
 
+def title_performance_context() -> str:
+    """
+    Build a human-readable summary of per-searched-title funnel performance.
+    Used by discover_titles() to drop low-yield titles and propose replacements.
+    Returns empty string if no data exists yet.
+    """
+    opps = list_opportunities()
+    if not opps:
+        return ""
+
+    stats: dict[str, dict] = {}
+    for o in opps:
+        t = o.get("searched_title") or "manual"
+        if t == "manual":
+            continue
+        if t not in stats:
+            stats[t] = {"found": 0, "screened_in": 0, "applied": 0}
+        stats[t]["found"] += 1
+        if o.get("stage") in ("screened_in", "tailored", "applied", "responded", "interviewing", "offer"):
+            stats[t]["screened_in"] += 1
+        if o.get("stage") in ("applied", "responded", "interviewing", "offer"):
+            stats[t]["applied"] += 1
+
+    if not stats:
+        return ""
+
+    lines = []
+    for t, s in sorted(stats.items(), key=lambda x: -x[1]["found"]):
+        scr_rate = round(s["screened_in"] / s["found"] * 100) if s["found"] else 0
+        lines.append(
+            f"  - {t}: {s['found']} found, {s['screened_in']} screened in ({scr_rate}%), {s['applied']} applied"
+        )
+
+    return "\n".join(lines)
+
+
 def seen_keys() -> set[str]:
     """
     Dedup keys for every opportunity ever created.

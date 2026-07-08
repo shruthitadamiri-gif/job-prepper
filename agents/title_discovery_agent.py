@@ -15,13 +15,15 @@ def _load_resume() -> str:
         return f.read()
 
 
-def discover_titles() -> dict:
+def discover_titles(performance_context: str = "") -> dict:
     """
     Reads resume.txt and returns two lists of job titles:
       - direct_fit: titles that closely match current experience
       - worth_exploring: adjacent/emerging titles worth considering
 
-    Each title has a rationale string.
+    performance_context: optional string summarising past search performance
+    per title (built from funnel data) — injected into the prompt so the
+    agent can drop consistently low-yield titles and propose replacements.
 
     Returns:
       {
@@ -30,6 +32,14 @@ def discover_titles() -> dict:
       }
     """
     resume = _load_resume()
+
+    perf_section = (
+        f"\nPAST SEARCH PERFORMANCE (titles you've searched before and their funnel results):\n"
+        f"{performance_context}\n"
+        f"Use this to drop titles that consistently produce no screened-in results and propose "
+        f"better alternatives. Keep titles that convert well.\n"
+        if performance_context else ""
+    )
 
     prompt = f"""You are a career advisor for senior AI/ML product professionals.
 
@@ -54,7 +64,7 @@ Rules:
 - Titles should be searchable as-is on job boards — use real market titles, not invented ones
 - Do not include seniority prefixes like "Senior" or "Principal" in every title — vary them
 - Return only the JSON, no explanation
-
+{perf_section}
 RESUME:
 {resume}"""
 

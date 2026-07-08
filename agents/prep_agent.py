@@ -8,7 +8,32 @@ load_dotenv()
 
 client = anthropic.Anthropic(max_retries=4)
 
-def run_prep_agent(jd_text: str, parsed_jd: dict) -> dict:
+ROUND_EMPHASIS = {
+    "recruiter_screen": (
+        "Focus on narrative, compensation expectations, logistics (remote/hybrid/relocation), "
+        "and why this role/company now. Behavioral and Situational questions should dominate."
+    ),
+    "hiring_manager": (
+        "Balance product sense, cross-functional leadership, and specific examples of shipping "
+        "AI/ML products. Mix Behavioral and Product Sense questions."
+    ),
+    "technical": (
+        "Emphasise AI/ML system design, MLOps, model monitoring, agentic AI architecture, "
+        "and hands-on data/ML depth from her background. Technical AI/ML questions should dominate."
+    ),
+    "onsite_loop": (
+        "Full mix across all categories — include one case study / product design question, "
+        "one system design question, and at least two behavioral questions."
+    ),
+}
+
+
+def run_prep_agent(
+    jd_text: str,
+    parsed_jd: dict,
+    round: str = "hiring_manager",
+    invite_context: str = "",
+) -> dict:
     """
     Generates a structured interview prep guide with topic tags and
     2-3 answer options per question. Augments with real interview
@@ -18,6 +43,15 @@ def run_prep_agent(jd_text: str, parsed_jd: dict) -> dict:
     company = parsed_jd.get("company", "this company")
     skills = ", ".join(parsed_jd.get("required_skills", []))
     keywords = ", ".join(parsed_jd.get("keywords", []))
+
+    round_label = round.replace("_", " ").title()
+    round_emphasis = ROUND_EMPHASIS.get(round, ROUND_EMPHASIS["hiring_manager"])
+
+    invite_section = (
+        f"\nINTERVIEW INVITE / RECRUITER EMAIL (treat as ground truth about format and interviewers):\n"
+        f"{invite_context}\n"
+        if invite_context else ""
+    )
 
     search_result = search_interview_questions(role, company)
     if search_result["success"]:
@@ -38,10 +72,12 @@ Her background: led Model Monitoring platform (346+ ML models), owned NBx model 
 ($127M impact), working on Agentic AI and Channel Orchestration. Prior data scientist at RepTrak.
 
 She is interviewing for: {role} at {company}
+Interview round: {round_label}
+Round emphasis: {round_emphasis}
 
 Job requires: {skills}
 Key keywords from JD: {keywords}
-
+{invite_section}
 {web_section}
 
 Return ONLY a valid JSON object with this exact structure — no markdown, no code fences:
