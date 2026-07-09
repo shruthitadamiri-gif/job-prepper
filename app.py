@@ -49,7 +49,64 @@ if not st.session_state.get("_authenticated"):
 
 st.markdown("""
 <style>
+    /* ── Layout ── */
     .main { max-width: 900px; }
+
+    /* ── Page background ── */
+    [data-testid="stAppViewContainer"] > .main { background-color: #F4F5F7; }
+    [data-testid="stAppViewContainer"] { background-color: #F4F5F7; }
+
+    /* ── Navigation tab bar (radio styled as tabs) ── */
+    div[role="radiogroup"] { border-bottom: 1px solid #E2E8F0; gap: 0 !important; padding-bottom: 0; }
+    div[role="radiogroup"] > label {
+        background: transparent !important;
+        border: none !important;
+        border-bottom: 2.5px solid transparent !important;
+        border-radius: 0 !important;
+        padding: 8px 16px 12px !important;
+        color: #767B85 !important;
+        font-weight: 500 !important;
+        font-size: 14px !important;
+        cursor: pointer !important;
+    }
+    div[role="radiogroup"] > label:has(input:checked) {
+        color: #3B6FE0 !important;
+        border-bottom: 2.5px solid #3B6FE0 !important;
+        font-weight: 600 !important;
+    }
+    div[role="radiogroup"] > label:hover { color: #3B6FE0 !important; }
+    /* hide the radio dots */
+    div[role="radiogroup"] > label > div:first-child { display: none !important; }
+
+    /* ── Score cards ── */
+    .score-card {
+        background: white; border: 1px solid #E8EAF0; border-radius: 10px;
+        padding: 16px 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); text-align: center;
+    }
+    .score-card .sc-num { font-size: 30px; font-weight: 700; color: #1E2433; line-height: 1.1; }
+    .score-card .sc-denom { font-size: 14px; color: #767B85; font-weight: 400; }
+    .score-card .sc-label { font-size: 12px; color: #767B85; margin-bottom: 6px; }
+    .score-card .sc-feedback { font-size: 12px; color: #767B85; margin-top: 6px; }
+
+    /* ── Visa inline flag ── */
+    .visa-flag {
+        display: flex; gap: 10px; align-items: flex-start;
+        border: 1px solid #E8D5A3; background: #FEFBF0;
+        border-radius: 8px; padding: 10px 14px; margin: 10px 0;
+    }
+    .visa-flag-success {
+        border-color: #6EE7B7; background: #F0FDF9;
+    }
+    .visa-flag-error {
+        border-color: #FCA5A5; background: #FFF5F5;
+    }
+    .visa-flag .vf-title { font-weight: 600; font-size: 13px; color: #1E2433; }
+    .visa-flag .vf-detail { font-size: 12px; color: #767B85; margin-top: 2px; }
+
+    /* ── Job list rows ── */
+    .job-row { border-bottom: 1px solid #F0F2F5; padding: 2px 0; }
+
+    /* ── Keep legacy ── */
     .score-pass { color: #059669; font-weight: 600; }
     .score-fail { color: #dc2626; font-weight: 600; }
     .eval-card { background: #f8faff; border-left: 3px solid #3b82f6;
@@ -92,17 +149,20 @@ try:
 except Exception:
     pass
 
-nav_cols = st.columns([1, 1, 1, 1, 3])
-pages = [("🔍 Job Search", "search"), ("🎯 Run Job Prepper", "run"), ("📋 Pipeline", "pipeline"), ("📈 Usage", "usage")]
-for col, (label, key) in zip(nav_cols, pages):
-    with col:
-        active = st.session_state.page == key
-        if st.button(label, use_container_width=True,
-                     type="primary" if active else "secondary"):
-            st.session_state.page = key
-            st.rerun()
+_nav_options = ["Job Search", "Run Job Prepper", "Pipeline", "Usage"]
+_nav_keys    = ["search",     "run",            "pipeline", "usage"]
+_cur_page    = st.session_state.get("page", "search")
+_cur_idx     = _nav_keys.index(_cur_page) if _cur_page in _nav_keys else 0
 
-st.divider()
+_nav_choice = st.radio(
+    "nav", _nav_options, index=_cur_idx,
+    horizontal=True, label_visibility="collapsed",
+)
+_chosen_key = _nav_keys[_nav_options.index(_nav_choice)]
+if _chosen_key != _cur_page:
+    st.session_state.page = _chosen_key
+    st.rerun()
+
 page = st.session_state.page
 
 # ===============================================================
@@ -324,46 +384,88 @@ if page == "run":
         st.subheader("Running your agentic job prep system...")
         st.caption("Visa check + resume tailoring + ATS analysis + quality evaluation. Takes about 60–90 seconds.")
 
-        # Progress mapped to node completions from the LangGraph stream
-        NODE_PROGRESS = {
-            "parse_jd":        (15, "🔍 Parsing job description..."),
-            "visa_check":      (30, "🛂 Checking visa sponsorship eligibility..."),
-            "resume_agent":    (55, "📝 Tailoring your resume..."),
-            "ats_agent":       (75, "🧩 Checking ATS keyword coverage..."),
-            "evaluator":       (90, "⚖️ Evaluating quality..."),
-            "increment_retry": (55, "🔄 Quality check failed — regenerating resume with ATS feedback..."),
-            "package_output":  (100, "✅ Packaging results..."),
-        }
-
-        progress = st.progress(0)
-        status = st.empty()
-        visa_placeholder = st.empty()
+        _STEPS = [
+            ("parse_jd",       "Parsing job description"),
+            ("visa_check",     "Checking visa sponsorship eligibility"),
+            ("resume_agent",   "Tailoring resume to JD"),
+            ("ats_agent",      "Scoring ATS keyword coverage"),
+            ("evaluator",      "Evaluating resume quality"),
+            ("package_output", "Packaging results"),
+        ]
+        _STEP_KEYS = {k for k, _ in _STEPS}
 
         try:
             graph = build_graph()
             final_state = None
+            _completed: set = set()
+            _active_node = None
 
-            for event in graph.stream(make_initial_state(st.session_state.jd_text)):
-                for node_name, node_state in event.items():
-                    pct, msg = NODE_PROGRESS.get(node_name, (50, f"Running {node_name}..."))
-                    progress.progress(pct)
-                    status.info(msg)
-                    final_state = node_state
+            with st.status("Running agents…", expanded=True) as _status_box:
+                _placeholders = {}
+                for _nk, _lbl in _STEPS:
+                    _placeholders[_nk] = st.empty()
+                    _placeholders[_nk].markdown(
+                        f'<span style="color:#94a3b8">○ {_lbl}</span>',
+                        unsafe_allow_html=True,
+                    )
 
-                    # Show visa banner as soon as it's ready
-                    if node_name == "visa_check":
-                        visa_result = node_state.get("visa_result", {})
-                        if visa_result:
-                            _msg = f"**{visa_result['headline']}**\n\n{visa_result['detail']}"
-                            color = visa_result.get("color", "warning")
-                            if color == "success":
-                                visa_placeholder.success(_msg)
-                            elif color == "error":
-                                visa_placeholder.error(_msg)
-                            elif color == "info":
-                                visa_placeholder.info(_msg)
-                            else:
-                                visa_placeholder.warning(_msg)
+                visa_placeholder = st.empty()
+
+                for event in graph.stream(make_initial_state(st.session_state.jd_text)):
+                    for node_name, node_state in event.items():
+                        # Mark previous active node as done
+                        if _active_node and _active_node in _placeholders:
+                            _, _prev_lbl = next(
+                                (k, l) for k, l in _STEPS if k == _active_node
+                            )
+                            _placeholders[_active_node].markdown(
+                                f'<span style="color:#059669">✓ {_prev_lbl}</span>',
+                                unsafe_allow_html=True,
+                            )
+                            _completed.add(_active_node)
+
+                        if node_name in _placeholders:
+                            _, _cur_lbl = next(
+                                (k, l) for k, l in _STEPS if k == node_name
+                            )
+                            _placeholders[node_name].markdown(
+                                f'<span style="color:#3B6FE0;font-weight:600">⏳ {_cur_lbl}…</span>',
+                                unsafe_allow_html=True,
+                            )
+                            _active_node = node_name
+                        elif node_name == "increment_retry" and "resume_agent" in _placeholders:
+                            _placeholders["resume_agent"].markdown(
+                                '<span style="color:#d97706;font-weight:600">⏳ Quality check low — regenerating resume…</span>',
+                                unsafe_allow_html=True,
+                            )
+                            _active_node = "resume_agent"
+
+                        final_state = node_state
+
+                        # Show visa flag as soon as available
+                        if node_name == "visa_check":
+                            visa_result = node_state.get("visa_result", {})
+                            if visa_result:
+                                _msg = f"**{visa_result['headline']}** — {visa_result['detail']}"
+                                color = visa_result.get("color", "warning")
+                                if color == "success":
+                                    visa_placeholder.success(_msg)
+                                elif color == "error":
+                                    visa_placeholder.error(_msg)
+                                elif color == "info":
+                                    visa_placeholder.info(_msg)
+                                else:
+                                    visa_placeholder.warning(_msg)
+
+                # Mark last step done
+                if _active_node and _active_node in _placeholders:
+                    _, _last_lbl = next((k, l) for k, l in _STEPS if k == _active_node)
+                    _placeholders[_active_node].markdown(
+                        f'<span style="color:#059669">✓ {_last_lbl}</span>',
+                        unsafe_allow_html=True,
+                    )
+
+                _status_box.update(label="Analysis complete!", state="complete")
 
             st.session_state.result = {
                 "parsed_jd": final_state["parsed_jd"],
@@ -417,47 +519,44 @@ if page == "run":
 
         st.subheader(f"Results: {role} at {company}")
 
-        # Visa banner
+        # Visa inline flag (quiet, sized to its actual importance)
         visa_result = result.get("visa_result", {})
         if visa_result:
-            _src = " *(source: job description)*" if visa_result.get("source") == "jd" else " *(source: public H1B records)*" if visa_result.get("source") == "web" else ""
-            _visa_msg = f"**{visa_result['headline']}**  \n{visa_result['detail']}{_src}"
-            if visa_result["color"] == "success":
-                st.success(_visa_msg)
-            elif visa_result["color"] == "error":
-                st.error(_visa_msg)
-            elif visa_result["color"] == "info":
-                st.info(_visa_msg)
-            else:
-                st.warning(_visa_msg)
+            _src_note = " (source: JD)" if visa_result.get("source") == "jd" else " (source: H1B records)" if visa_result.get("source") == "web" else ""
+            _vcolor = visa_result.get("color", "warning")
+            _extra_cls = "visa-flag-success" if _vcolor == "success" else "visa-flag-error" if _vcolor == "error" else ""
+            _icon = "✅" if _vcolor == "success" else "🚫" if _vcolor == "error" else "🟡"
+            st.markdown(
+                f'<div class="visa-flag {_extra_cls}">'
+                f'<span style="font-size:15px">{_icon}</span>'
+                f'<div><div class="vf-title">{visa_result["headline"]}</div>'
+                f'<div class="vf-detail">{visa_result["detail"]}{_src_note}</div></div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
 
-        # Eval scores
-        with st.expander("📊 Quality scores from evaluator agent", expanded=True):
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                score = eval_result["relevance_score"]
-                color = "score-pass" if score >= 7 else "score-fail"
-                st.markdown("**JD Relevance**")
-                st.markdown(f'<span class="{color}">{score}/10</span>', unsafe_allow_html=True)
-                st.caption(eval_result["feedback"]["relevance"])
-            with col2:
-                score = eval_result["accuracy_score"]
-                color = "score-pass" if score >= 7 else "score-fail"
-                st.markdown("**Factual Accuracy**")
-                st.markdown(f'<span class="{color}">{score}/10</span>', unsafe_allow_html=True)
-                st.caption(eval_result["feedback"]["accuracy"])
-            with col3:
-                score = eval_result["ats_score"]
-                color = "score-pass" if score >= 7 else "score-fail"
-                st.markdown("**ATS Keywords**")
-                st.markdown(f'<span class="{color}">{score}/10</span>', unsafe_allow_html=True)
-                st.caption(eval_result["feedback"]["ats"])
-
-            overall = eval_result["overall_score"]
-            if eval_result["passes"]:
-                st.success(f"✅ Overall score: {overall}/10 — passes quality threshold")
-            else:
-                st.warning(f"⚠️ Overall score: {overall}/10 — below threshold, review carefully")
+        # Eval scores — score cards get primary visual weight
+        sc1, sc2, sc3 = st.columns(3)
+        _score_cards = [
+            (sc1, "JD Relevance",     eval_result["relevance_score"], eval_result["feedback"]["relevance"]),
+            (sc2, "Factual Accuracy", eval_result["accuracy_score"],  eval_result["feedback"]["accuracy"]),
+            (sc3, "ATS Keywords",     eval_result["ats_score"],       eval_result["feedback"]["ats"]),
+        ]
+        for _col, _label, _score, _feedback in _score_cards:
+            with _col:
+                st.markdown(
+                    f'<div class="score-card">'
+                    f'<div class="sc-label">{_label}</div>'
+                    f'<div class="sc-num">{_score}<span class="sc-denom">/10</span></div>'
+                    f'<div class="sc-feedback">{_feedback}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+        overall = eval_result["overall_score"]
+        if eval_result["passes"]:
+            st.success(f"Overall score: {overall}/10 — passes quality threshold")
+        else:
+            st.warning(f"Overall score: {overall}/10 — below threshold, review carefully")
 
         # ATS gap
         ats_result = result["ats_result"]
@@ -528,7 +627,7 @@ if page == "run":
             )
             col1, col2, col3 = st.columns([1, 1, 2])
             with col1:
-                if st.button("✅ Approve & Re-score ATS", type="primary", key="approve_rescore"):
+                if st.button("Approve & Re-score", type="primary", key="approve_rescore", use_container_width=True):
                     try:
                         st.session_state.approved_resume = edited_resume
                         st.session_state.result["resume_output"] = edited_resume
@@ -539,9 +638,9 @@ if page == "run":
                     except Exception as _e:
                         st.error(f"Re-score failed: {_e}")
             with col2:
-                if st.button("🔄 Regenerate Resume", key="regen_resume"):
+                if st.button("Regenerate Resume", key="regen_resume", use_container_width=True):
                     missing = result["ats_result"].get("missing_keywords", [])
-                    with st.spinner(f"Regenerating resume — targeting {len(missing)} missing keyword(s)..."):
+                    with st.spinner(f"Regenerating — targeting {len(missing)} missing keyword(s)…"):
                         try:
                             new_resume = run_resume_agent(
                                 st.session_state.jd_text, parsed_jd,
@@ -569,7 +668,7 @@ if page == "run":
         col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
         with col1:
             st.download_button(
-                label="📥 Download .txt",
+                label="Download .txt",
                 data=st.session_state.approved_resume,
                 file_name=f"resume_{company.lower().replace(' ', '_')}.txt",
                 mime="text/plain",
@@ -577,7 +676,7 @@ if page == "run":
             )
         with col2:
             st.download_button(
-                label="📥 Download .docx",
+                label="Download .docx",
                 data=resume_to_docx(st.session_state.approved_resume),
                 file_name=f"resume_{company.lower().replace(' ', '_')}.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -586,7 +685,7 @@ if page == "run":
         with col3:
             opp_id = st.session_state.get("opportunity_id")
             if opp_id:
-                if st.button("✅ Mark as Applied", use_container_width=True, type="primary"):
+                if st.button("Mark as Applied", use_container_width=True, type="primary"):
                     try:
                         update_stage(opp_id, "applied")
                         update_fields(opp_id, {"resume_version": st.session_state.approved_resume})
@@ -594,7 +693,7 @@ if page == "run":
                     except Exception as _e:
                         st.warning(f"Could not update stage: {_e}")
         with col4:
-            if st.button("🔁 Start Over with New JD", use_container_width=True):
+            if st.button("Start Over", use_container_width=True):
                 for key in ["stage", "result", "approved_resume", "approved_prep",
                             "jd_text", "role", "jd_text_draft", "history_saved", "opportunity_id"]:
                     st.session_state.pop(key, None)
@@ -1035,77 +1134,91 @@ if page == "search":
         st.session_state.js_batch_results = None
         st.rerun()
 
-    # ── STEP 2: Job cards with checkboxes ────────────────────────
+    # ── STEP 2: Job list with filter + select-all ─────────────────
     if st.session_state.get("js_jobs") is not None:
         all_jobs = st.session_state.js_jobs
         active_filter = st.session_state.get("js_source_filter", "All")
-        jobs = [j for j in all_jobs if active_filter == "All" or active_filter.lower() in j.get("via", "").lower()]
+        jobs_src = [j for j in all_jobs if active_filter == "All" or active_filter.lower() in j.get("via", "").lower()]
 
         st.divider()
         st.markdown("#### Step 2 — Select roles to run Job Prepper on")
-        st.caption(f"{len(jobs)} jobs found — sorted by title match score, check the ones you want to analyse")
+
+        # Filter bar
+        fb1, fb2, fb3, fb4 = st.columns([1.2, 1, 1, 3])
+        with fb1:
+            min_match = st.selectbox(
+                "Min. match",
+                options=[0, 50, 60, 70, 80, 90],
+                format_func=lambda x: "Any match" if x == 0 else f"{x}%+",
+                index=0, key="js_min_match",
+                label_visibility="collapsed",
+            )
+        with fb2:
+            if st.button("Select all", key="js_select_all_btn", use_container_width=True):
+                _filtered_for_select = [j for j in jobs_src if j.get("title_match", 0) >= min_match]
+                st.session_state.js_selected = {_job_key(j) for j in _filtered_for_select}
+                st.rerun()
+        with fb3:
+            if st.button("Clear", key="js_clear_btn", use_container_width=True):
+                st.session_state.js_selected = set()
+                st.rerun()
+
+        jobs = [j for j in jobs_src if j.get("title_match", 0) >= min_match]
+        st.caption(f"{len(jobs)} jobs shown · sorted by match score")
 
         if not jobs:
-            st.info("No jobs found. Try a wider date range or 'All' sources.")
+            st.info("No jobs match that filter. Try lowering the min. match % or 'All' sources.")
         else:
-            # Selection keyed by stable job identity, not integer index —
-            # so changing the source filter doesn't remap checked boxes to wrong jobs
             selected: set = st.session_state.get("js_selected", set())
+
+            # Column header
+            _hc1, _hc2, _hc3, _hc4, _hc5 = st.columns([0.4, 3.5, 3, 0.7, 1.2])
+            _hc2.caption("Title")
+            _hc3.caption("Company · Location · Date")
+            _hc4.caption("Match")
+            _hc5.caption("Source")
+            st.markdown('<hr style="margin:4px 0 6px;border-color:#E2E8F0">', unsafe_allow_html=True)
 
             for i, job in enumerate(jobs):
                 jk = _job_key(job)
-                remote_badge = "🌐 Remote &nbsp;" if job.get("is_remote") else ""
-                via = (
-                    f' <span style="background:#ede9fe;color:#6d28d9;padding:1px 7px;'
-                    f'border-radius:8px;font-size:11px">{job["via"]}</span>'
-                    if job.get("via") else ""
-                )
                 tm = job.get("title_match", 0)
                 tm_color = "#059669" if tm >= 75 else "#d97706" if tm >= 50 else "#dc2626"
-                tm_badge = (
-                    f'<span style="background:#f1f5f9;color:{tm_color};padding:1px 7px;'
-                    f'border-radius:8px;font-size:11px;font-weight:700">'
-                    f'match {tm}%</span>'
-                )
+                meta = f'{job["company"]} · {job.get("location") or "—"} · {job.get("date_posted","")}'
 
-                col_chk, col_info = st.columns([0.5, 9])
-                with col_chk:
+                c_chk, c_title, c_meta, c_match, c_via = st.columns([0.4, 3.5, 3, 0.7, 1.2])
+                with c_chk:
                     checked = st.checkbox("", key=f"sel_{i}", value=(jk in selected))
-                    if checked:
-                        selected.add(jk)
+                    if checked: selected.add(jk)
+                    else: selected.discard(jk)
+                with c_title:
+                    if job.get("url"):
+                        st.markdown(f'**[{job["title"]}]({job["url"]})**')
                     else:
-                        selected.discard(jk)
-                with col_info:
-                    title_html = (
-                        f'<a href="{job["url"]}" target="_blank" style="font-size:15px;'
-                        f'font-weight:700;color:#1e293b;text-decoration:none">'
-                        f'{job["title"]} ↗</a>'
-                        if job.get("url") else
-                        f'<strong style="font-size:15px">{job["title"]}</strong>'
-                    )
-                    st.markdown(
-                        f'<div style="border:1px solid #e2e8f0;border-radius:8px;'
-                        f'padding:10px 14px;background:#fafbff;margin-bottom:4px">'
-                        f'{title_html} {tm_badge}{via}<br>'
-                        f'<span style="color:#475569;font-size:13px">{job["company"]}</span>'
-                        f' <span style="color:#cbd5e1">·</span> '
-                        f'<span style="color:#94a3b8;font-size:12px">'
-                        f'{remote_badge}📍{job["location"] or "—"} &nbsp;·&nbsp; 📅{job["date_posted"]}'
-                        f'</span></div>',
-                        unsafe_allow_html=True
-                    )
+                        st.markdown(f'**{job["title"]}**')
                     if job.get("description_snippet"):
-                        with st.expander("Preview description", expanded=False):
+                        with st.expander("Description", expanded=False):
                             st.caption(job["description_snippet"])
+                with c_meta:
+                    st.markdown(f'<span style="font-size:13px;color:#64748b">{meta}</span>', unsafe_allow_html=True)
+                with c_match:
+                    st.markdown(f'<div style="font-size:13px;font-weight:700;color:{tm_color};padding-top:4px">{tm}%</div>', unsafe_allow_html=True)
+                with c_via:
+                    if job.get("via"):
+                        st.markdown(f'<span style="background:#ede9fe;color:#6d28d9;padding:2px 8px;border-radius:10px;font-size:11px">{job["via"]}</span>', unsafe_allow_html=True)
 
             st.session_state.js_selected = selected
 
+            # Persistent action bar
             if selected:
-                st.divider()
-                screen_btn = st.button(
-                    f"🔍 Screen {len(selected)} selected role{'s' if len(selected) > 1 else ''} →",
-                    type="primary"
-                )
+                st.markdown('<hr style="margin:12px 0 8px;border-color:#E2E8F0">', unsafe_allow_html=True)
+                _ab1, _ab2 = st.columns([1, 3])
+                with _ab2:
+                    st.caption(f'{len(selected)} role{"s" if len(selected) > 1 else ""} selected')
+                with _ab1:
+                    screen_btn = st.button(
+                        f"Screen {len(selected)} selected →",
+                        type="primary", use_container_width=True,
+                    )
                 if screen_btn:
                     selected_jobs = [j for j in jobs if _job_key(j) in selected]
                     screening_results = []
