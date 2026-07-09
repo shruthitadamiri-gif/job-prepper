@@ -47,7 +47,7 @@ Rules:
 - No extra blank lines between bullets within a role
 - Do not drop any company or role from the source resume
 - Copy name, contact, and education exactly from the source — do not alter them
-- ONE PAGE ONLY: Respect the bullet counts above exactly. Each bullet is one line, max ~120 characters. Do not expand bullets into multi-sentence paragraphs.
+- ONE PAGE ONLY: Respect the bullet counts above exactly. Each bullet is one sentence — preserve all metrics and specifics, but do not split a bullet into two sentences.
 """
 
 
@@ -127,7 +127,7 @@ def run_resume_agent(
         bullet_cap_section = f"""
 BULLET COUNT — HARD CAPS (do not add, merge, or split bullets):
 {_cap_lines}
-Each bullet must fit on one line (max ~120 characters). No multi-sentence bullets.
+Keep each bullet as a single sentence. Preserve all metrics and specifics from the source — do not summarise or compress them.
 """
     else:
         bullet_cap_section = ""
