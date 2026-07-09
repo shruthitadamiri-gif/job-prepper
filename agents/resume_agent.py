@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import anthropic
 from dotenv import load_dotenv
@@ -46,13 +47,55 @@ Rules:
 - No extra blank lines between bullets within a role
 - Do not drop any company or role from the source resume
 - Copy name, contact, and education exactly from the source — do not alter them
-- ONE PAGE ONLY: Use the exact same number of bullets per role as the source resume — do not add bullets. Do not expand bullets into multiple sentences. Keep each bullet to one line. The total word count must not exceed the source resume's word count.
+- ONE PAGE ONLY: Respect the bullet counts above exactly. Each bullet is one line, max ~120 characters. Do not expand bullets into multi-sentence paragraphs.
 """
 
 
 def _load_resume() -> str:
     with open(RESUME_PATH, "r") as f:
         return f.read()
+
+
+def _count_source_items() -> dict[str, int]:
+    """
+    Parse resume.txt and return {company_name: paragraph_count} for each role.
+    Used to enforce exact per-role bullet counts in the generated resume.
+    """
+    text = _load_resume()
+    counts: dict[str, int] = {}
+    current_company: str | None = None
+    item_count = 0
+    in_experience = False
+
+    for line in text.split("\n"):
+        s = line.strip()
+        if not s:
+            continue
+        if s.upper() == "EXPERIENCE":
+            in_experience = True
+            continue
+        if s.upper() in ("EDUCATION", "SKILLS", "SUMMARY", "CERTIFICATIONS", "AWARDS"):
+            if current_company and item_count:
+                counts[current_company] = item_count
+            in_experience = False
+            current_company = None
+            item_count = 0
+            continue
+        if not in_experience:
+            continue
+        # Role header: "Company | Title | Location | Dates"
+        if "|" in s and re.search(r"\b(20\d\d|Present)\b", s):
+            if current_company and item_count:
+                counts[current_company] = item_count
+            current_company = s.split("|")[0].strip()
+            item_count = 0
+        elif current_company:
+            item_count += 1
+
+    if current_company and item_count:
+        counts[current_company] = item_count
+
+    return counts
 
 
 def run_resume_agent(
@@ -76,6 +119,18 @@ def run_resume_agent(
     missing_keywords: ATS gap keywords to weave in (from latest ATS result).
     """
     source = current_resume if current_resume else _load_resume()
+
+    # Build per-role bullet caps from the source resume
+    _bullet_counts = _count_source_items()
+    if _bullet_counts:
+        _cap_lines = "\n".join(f"  - {company}: exactly {n} bullets" for company, n in _bullet_counts.items())
+        bullet_cap_section = f"""
+BULLET COUNT — HARD CAPS (do not add, merge, or split bullets):
+{_cap_lines}
+Each bullet must fit on one line (max ~120 characters). No multi-sentence bullets.
+"""
+    else:
+        bullet_cap_section = ""
 
     if missing_keywords:
         # Cap to 6 most relevant to avoid bloat and awkward insertions
@@ -120,7 +175,7 @@ STRICT CONTENT RULES:
 - Lead every bullet with a metric or outcome where one exists in the source
 - Reorder bullets within each role so the most JD-relevant ones come first
 - Keep ALL companies and roles — do not drop any position
-{ats_section}{evidence_section}
+{bullet_cap_section}{ats_section}{evidence_section}
 {FORMAT_RULES}
 JOB DESCRIPTION:
 {jd_text}
