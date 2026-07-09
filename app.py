@@ -479,7 +479,6 @@ if page == "run":
             st.session_state.approved_prep = None
             st.session_state.original_ats_result = final_state["ats_result"]
             st.session_state.stage = "review"
-            status.success("Done! Reviewing your results...")
             st.rerun()
 
         except Exception as e:
