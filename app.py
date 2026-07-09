@@ -528,23 +528,32 @@ if page == "run":
             )
             col1, col2, col3 = st.columns([1, 1, 2])
             with col1:
-                if st.button("✅ Approve & Re-score ATS", type="primary"):
-                    st.session_state.approved_resume = edited_resume
-                    st.session_state.result["ats_result"] = run_ats_agent(edited_resume, parsed_jd)
-                    st.rerun()
+                if st.button("✅ Approve & Re-score ATS", type="primary", key="approve_rescore"):
+                    try:
+                        st.session_state.approved_resume = edited_resume
+                        st.session_state.result["resume_output"] = edited_resume
+                        new_ats = run_ats_agent(edited_resume, parsed_jd)
+                        st.session_state.result["ats_result"] = new_ats
+                        st.toast(f"ATS re-scored: {new_ats['coverage_percent']}% keyword coverage", icon="✅")
+                        st.rerun()
+                    except Exception as _e:
+                        st.error(f"Re-score failed: {_e}")
             with col2:
-                if st.button("🔄 Regenerate Resume"):
+                if st.button("🔄 Regenerate Resume", key="regen_resume"):
                     missing = result["ats_result"].get("missing_keywords", [])
                     with st.spinner(f"Regenerating resume — targeting {len(missing)} missing keyword(s)..."):
-                        new_resume = run_resume_agent(
-                            st.session_state.jd_text, parsed_jd,
-                            missing_keywords=missing,
-                            current_resume=st.session_state.approved_resume,
-                            session_id=st.session_state.ui_session_id,
-                        )
-                        st.session_state.approved_resume = new_resume
-                        st.session_state.result["resume_output"] = new_resume
-                        st.session_state.result["ats_result"] = run_ats_agent(new_resume, parsed_jd)
+                        try:
+                            new_resume = run_resume_agent(
+                                st.session_state.jd_text, parsed_jd,
+                                missing_keywords=missing,
+                                current_resume=st.session_state.approved_resume,
+                                session_id=st.session_state.ui_session_id,
+                            )
+                            st.session_state.approved_resume = new_resume
+                            st.session_state.result["resume_output"] = new_resume
+                            st.session_state.result["ats_result"] = run_ats_agent(new_resume, parsed_jd)
+                        except Exception as _e:
+                            st.error(f"Regeneration failed: {_e}")
                     st.rerun()
 
         with tab2:
