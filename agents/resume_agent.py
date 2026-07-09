@@ -47,7 +47,7 @@ Rules:
 - No extra blank lines between bullets within a role
 - Do not drop any company or role from the source resume
 - Copy name, contact, and education exactly from the source — do not alter them
-- ONE PAGE ONLY: Respect the bullet counts above exactly. Each bullet is one sentence — preserve all metrics and specifics, but do not split a bullet into two sentences.
+- Do not add new bullets that don't exist in the source resume. Preserve all metrics and specifics — do not compress or summarise existing bullets.
 """
 
 
@@ -120,17 +120,7 @@ def run_resume_agent(
     """
     source = current_resume if current_resume else _load_resume()
 
-    # Build per-role bullet caps from the source resume
-    _bullet_counts = _count_source_items()
-    if _bullet_counts:
-        _cap_lines = "\n".join(f"  - {company}: exactly {n} bullets" for company, n in _bullet_counts.items())
-        bullet_cap_section = f"""
-BULLET COUNT — HARD CAPS (do not add, merge, or split bullets):
-{_cap_lines}
-Keep each bullet as a single sentence. Preserve all metrics and specifics from the source — do not summarise or compress them.
-"""
-    else:
-        bullet_cap_section = ""
+    bullet_cap_section = ""
 
     if missing_keywords:
         # Cap to 6 most relevant to avoid bloat and awkward insertions
