@@ -46,6 +46,7 @@ Rules:
 - No extra blank lines between bullets within a role
 - Do not drop any company or role from the source resume
 - Copy name, contact, and education exactly from the source — do not alter them
+- ONE PAGE ONLY: Use the exact same number of bullets per role as the source resume — do not add bullets. Do not expand bullets into multiple sentences. Keep each bullet to one line. The total word count must not exceed the source resume's word count.
 """
 
 
@@ -77,12 +78,16 @@ def run_resume_agent(
     source = current_resume if current_resume else _load_resume()
 
     if missing_keywords:
-        gap_list = "\n".join(f"  - {kw}" for kw in missing_keywords)
+        # Cap to 6 most relevant to avoid bloat and awkward insertions
+        top_kws = missing_keywords[:6]
+        gap_list = "\n".join(f"  - {kw}" for kw in top_kws)
         ats_section = f"""
-ATS KEYWORD GAP — MANDATORY:
-The current resume is missing these JD keywords. Weave AT LEAST 90% of them
-into bullets and skills lines where they truthfully apply. Do not add them
-as a standalone list. Every use must read as authentic experience.
+ATS KEYWORD GAP:
+The resume is missing these high-priority JD keywords. Weave them into
+existing bullets or the skills section where they fit naturally and truthfully.
+Do NOT add new bullets or expand existing ones to fit them in — only substitute
+or append to language that already exists. Skip any keyword that cannot be
+added without sounding forced.
 
 Missing keywords:
 {gap_list}
@@ -129,7 +134,7 @@ Output only the resume. No commentary, no preamble, no markdown code blocks."""
     _t0 = time.monotonic()
     message = client.messages.create(
         model=_model,
-        max_tokens=1800,
+        max_tokens=1400,
         messages=[{"role": "user", "content": prompt}]
     )
     log_usage(session_id, "resume_agent", _model, message, int((time.monotonic() - _t0) * 1000))
