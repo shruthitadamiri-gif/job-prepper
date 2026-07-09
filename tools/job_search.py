@@ -1,6 +1,7 @@
 import os
 import re
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
@@ -10,6 +11,10 @@ load_dotenv()
 
 SERPAPI_KEY = os.getenv("SERPAPI_KEY", "").strip()
 SERPAPI_URL = "https://serpapi.com/search"
+
+ADZUNA_APP_ID  = os.getenv("ADZUNA_APP_ID", "").strip()
+ADZUNA_APP_KEY = os.getenv("ADZUNA_APP_KEY", "").strip()
+ADZUNA_URL     = "https://api.adzuna.com/v1/api/jobs/us/search/1"
 
 _model = None
 
@@ -114,6 +119,131 @@ def search_jobs(
     return jobs
 
 
+def _normalize_job(
+    title: str, company: str, location: str, url: str,
+    description: str, date_posted: str, via: str,
+    is_remote: bool = False,
+) -> dict:
+    """Normalise a job from any provider into the shared schema."""
+    return {
+        "title": title,
+        "company": company,
+        "location": location,
+        "is_remote": is_remote or "remote" in location.lower() or "remote" in title.lower(),
+        "date_posted": date_posted,
+        "date_dt": None,
+        "date_unknown": not date_posted,
+        "url": url,
+        "description_snippet": description[:400],
+        "employment_type": "",
+        "via": via,
+    }
+
+
+def search_jobs_remotive(title: str, days_back: int = 30) -> list[dict]:
+    """
+    Search Remotive for remote tech/PM jobs. No auth required.
+    Filters by title keyword match since Remotive has no location param
+    (it's remote-only by definition).
+    """
+    try:
+        resp = requests.get(
+            "https://remotive.com/api/remote-jobs",
+            params={"search": title, "limit": 20},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        print(f"Remotive error for '{title}': {e}")
+        return []
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
+    jobs = []
+    for job in data.get("jobs", []):
+        # Parse ISO date
+        pub = job.get("publication_date", "")
+        try:
+            pub_dt = datetime.fromisoformat(pub.replace("Z", "+00:00"))
+            if pub_dt < cutoff:
+                continue
+            date_str = pub_dt.strftime("%Y-%m-%d")
+        except Exception:
+            date_str = pub[:10] if pub else ""
+
+        jobs.append(_normalize_job(
+            title=job.get("title", ""),
+            company=job.get("company_name", ""),
+            location="Remote",
+            url=job.get("url", ""),
+            description=job.get("description", "")[:400],
+            date_posted=date_str,
+            via="Remotive",
+            is_remote=True,
+        ))
+
+    return jobs
+
+
+def search_jobs_adzuna(
+    title: str,
+    location: str = "San Francisco, CA",
+    days_back: int = 30,
+    max_results: int = 15,
+) -> list[dict]:
+    """
+    Search Adzuna (aggregates Indeed, Glassdoor, and others).
+    Requires ADZUNA_APP_ID and ADZUNA_APP_KEY env vars.
+    """
+    if not ADZUNA_APP_ID or not ADZUNA_APP_KEY:
+        return []
+
+    # Map location string to a simple city name for Adzuna's where param
+    where = location.split(",")[0].strip() if location else "San Francisco"
+    # Adzuna uses max_days_old for date filtering
+    max_days = min(days_back, 30)
+
+    try:
+        resp = requests.get(
+            ADZUNA_URL,
+            params={
+                "app_id": ADZUNA_APP_ID,
+                "app_key": ADZUNA_APP_KEY,
+                "what": title,
+                "where": where,
+                "results_per_page": max_results,
+                "max_days_old": max_days,
+                "content-type": "application/json",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        print(f"Adzuna error for '{title}': {e}")
+        return []
+
+    jobs = []
+    for job in data.get("results", []):
+        created = job.get("created", "")
+        try:
+            date_str = created[:10]
+        except Exception:
+            date_str = ""
+
+        jobs.append(_normalize_job(
+            title=job.get("title", ""),
+            company=(job.get("company") or {}).get("display_name", ""),
+            location=(job.get("location") or {}).get("display_name", location),
+            url=job.get("redirect_url", ""),
+            description=job.get("description", ""),
+            date_posted=date_str,
+            via="Adzuna",
+        ))
+
+    return jobs
+
+
 def search_all_titles(
     titles: list[str],
     location: str = "United States",
@@ -134,8 +264,29 @@ def search_all_titles(
     seen: dict[tuple, dict] = {}   # dedup key → surviving job dict
     result: dict[str, list[dict]] = {t: [] for t in titles}
 
+    has_serpapi  = bool(SERPAPI_KEY)
+    has_adzuna   = bool(ADZUNA_APP_ID and ADZUNA_APP_KEY)
+    is_remote    = "remote" in location.lower()
+
+    def _fetch_all_for_title(searched_title: str) -> list[tuple[str, dict]]:
+        """Return list of (searched_title, job) pairs from all active providers."""
+        pairs = []
+        fns = []
+        if has_serpapi:
+            fns.append(lambda t=searched_title: search_jobs(t, location=location, days_back=days_back))
+        if has_adzuna:
+            fns.append(lambda t=searched_title: search_jobs_adzuna(t, location=location, days_back=days_back))
+        # Always include Remotive for remote coverage
+        fns.append(lambda t=searched_title: search_jobs_remotive(t, days_back=days_back))
+
+        with ThreadPoolExecutor(max_workers=len(fns)) as ex:
+            for jobs in ex.map(lambda f: f(), fns):
+                for job in jobs:
+                    pairs.append((searched_title, job))
+        return pairs
+
     for searched_title in titles:
-        for job in search_jobs(searched_title, location=location, days_back=days_back):
+        for _, job in _fetch_all_for_title(searched_title):
             dk = (job["title"].lower().strip(), job["company"].lower().strip())
             if dk in seen:
                 existing = seen[dk]

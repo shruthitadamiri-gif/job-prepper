@@ -964,8 +964,12 @@ if page == "search":
     st.subheader("🔍 Job Search")
 
     has_serpapi = bool(os.getenv("SERPAPI_KEY", "").strip())
-    if not has_serpapi:
-        st.warning("Add `SERPAPI_KEY` to your Streamlit secrets to enable job search.")
+    has_adzuna  = bool(os.getenv("ADZUNA_APP_ID", "").strip() and os.getenv("ADZUNA_APP_KEY", "").strip())
+    active_sources = (["SerpAPI"] if has_serpapi else []) + (["Adzuna"] if has_adzuna else []) + ["Remotive"]
+    if not has_serpapi and not has_adzuna:
+        st.warning("Add `SERPAPI_KEY` or `ADZUNA_APP_ID`/`ADZUNA_APP_KEY` to your Streamlit secrets to enable broader job search. Remotive (remote roles) is always active.")
+    else:
+        st.caption(f"Active sources: {', '.join(active_sources)}")
 
     # ── STEP 1: Search controls ──────────────────────────────────
     st.markdown("#### Step 1 — Search for roles")
@@ -985,8 +989,7 @@ if page == "search":
                                       label_visibility="collapsed")
     with c4:
         st.caption(" ")
-        search_btn = st.button("🔍 Search", type="primary", use_container_width=True,
-                                disabled=not has_serpapi)
+        search_btn = st.button("🔍 Search", type="primary", use_container_width=True)
 
     custom_title = st.text_input(
         "➕ Add your own title",
