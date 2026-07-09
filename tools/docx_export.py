@@ -219,13 +219,13 @@ def resume_to_docx(resume_text: str, name: str = "SHRUTHI TADAMIRI",
     # Strip the leading name/contact block from the LLM output — it's already
     # rendered by _add_name_header above. Skip until we hit the first real
     # section header (SUMMARY, SKILLS, EXPERIENCE, etc.).
+    # Skip the name + contact lines the LLM outputs — already rendered by _add_name_header.
+    # Only stop at a recognised section word (SUMMARY, SKILLS, EXPERIENCE, …),
+    # NOT at any all-caps line, otherwise the name itself triggers the break.
     first_section_idx = 0
     for i, line in enumerate(lines):
-        clean_test = re.sub(r"[#\-*`]", "", line).strip()
-        label_test = re.sub(r"[*_`]", "", clean_test).strip()
-        if label_test.upper() in KNOWN_SECTION_WORDS or (
-            clean_test.isupper() and 2 < len(clean_test) < 60 and not clean_test.startswith("•")
-        ):
+        label_test = re.sub(r"[#\-*`*_]", "", line).strip().upper()
+        if label_test in KNOWN_SECTION_WORDS:
             first_section_idx = i
             break
     lines = lines[first_section_idx:]
