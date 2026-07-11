@@ -19,7 +19,7 @@ OUTPUT FORMAT — FOLLOW EXACTLY, NO EXCEPTIONS:
 [Phone] | [Email] | [LinkedIn] | [Location]
 
 SUMMARY
-[2-3 sentence summary tailored to the JD — use only facts from the source resume]
+[2-3 sentence narrative tailored to the JD. Must be a high-level overview — do NOT repeat specific metrics, project names, or phrases that appear in the experience bullets below. The summary and bullets should complement each other, not duplicate each other.]
 
 SKILLS
 AI/ML & Data: [comma-separated skills]
