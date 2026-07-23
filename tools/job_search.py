@@ -9,6 +9,68 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 load_dotenv()
 
+# ── AI PM fit scoring ─────────────────────────────────────────────────────────
+# Three independent signal categories, +1 point each. Edit phrase lists here
+# to tune without touching scoring logic.
+
+_MODEL_METRICS_PHRASES = [
+    "model performance", "model monitoring", "drift", "model observability",
+    "success metrics for models", "mttd", "model accuracy in production",
+    "model quality", "model evaluation", "production model", "model degradation",
+    "data drift", "concept drift",
+]
+
+_DS_PARTNERSHIP_PHRASES = [
+    "partner with data science", "work with ml engineers", "collaborate with applied scientists",
+    "bridge between product and engineering on ml", "translate model capabilities",
+    "data science team", "machine learning engineers", "partner with research",
+    "cross-functional with data", "work alongside data scientists",
+    "partner with applied scientists", "collaborate with ml",
+]
+
+_PRODUCTION_AI_PHRASES = [
+    "production ai systems", "deployed models", "ml in production",
+    "model lifecycle", "mlops", "agentic system", "model deployment pipeline",
+    "model serving", "model rollout", "model release", "inference infrastructure",
+    "production ml", "model registry", "feature store", "model pipeline",
+]
+
+
+def score_ai_pm_fit(jd_text: str) -> dict:
+    """
+    Score a JD for fit with a PM who owns model lifecycle decisions
+    (monitoring, evaluation, deployment) without writing training code.
+
+    Returns:
+      {
+        "score": int (0-3),
+        "matched_signals": list[str],   # human-readable labels for matched categories
+        "summary": str                  # one-sentence description
+      }
+    """
+    text = jd_text.lower()
+    matched = []
+
+    if any(p in text for p in _MODEL_METRICS_PHRASES):
+        matched.append("model metrics ownership")
+    if any(p in text for p in _DS_PARTNERSHIP_PHRASES):
+        matched.append("DS/ML partnership")
+    if any(p in text for p in _PRODUCTION_AI_PHRASES):
+        matched.append("production AI systems")
+
+    score = len(matched)
+
+    if score == 3:
+        summary = "Strong signal: model lifecycle ownership, DS/ML partnership, and production AI all present."
+    elif score == 2:
+        summary = f"Moderate signal: {' and '.join(matched)} present."
+    elif score == 1:
+        summary = f"Weak signal: only {matched[0]} detected."
+    else:
+        summary = "No AI PM signals detected — generic PM or AI-assisted-features role."
+
+    return {"score": score, "matched_signals": matched, "summary": summary}
+
 SERPAPI_KEY = os.getenv("SERPAPI_KEY", "").strip()
 SERPAPI_URL = "https://serpapi.com/search"
 
@@ -309,6 +371,11 @@ def search_all_titles(
             score = cosine_similarity([s_emb], [r_emb])[0][0]
             job["title_match"] = int(round(float(score) * 100))
 
+    # Compute AI PM fit score for every surviving job from its description snippet
+    for job in survivors:
+        fit = score_ai_pm_fit(job.get("description_snippet", ""))
+        job["ai_pm_fit"] = fit
+
     # Sort each group by title_match descending
     for title in result:
         result[title].sort(key=lambda j: j.get("title_match", 0), reverse=True)
@@ -344,3 +411,41 @@ def _parse_relative_date(text: str) -> datetime | None:
     elif unit == "month":
         return now - timedelta(days=n * 30)
     return None
+
+
+if __name__ == "__main__":
+    # Unit-testable demo for score_ai_pm_fit across three signal levels
+    cases = [
+        (
+            "high-signal",
+            """
+            We need a PM to own the model lifecycle for our production AI systems.
+            You will monitor model performance and drift, partner with data science
+            and ML engineers on deployment decisions, and drive our MLOps roadmap.
+            Success metrics for models are yours to define and track.
+            """,
+        ),
+        (
+            "AI-tools-not-production",
+            """
+            We're looking for an AI Product Manager to build AI-powered features
+            for our customer-facing product. You'll use AI tools like ChatGPT and
+            Copilot to accelerate the team, define AI-assisted workflows, and
+            ship features that delight users. No ML background required.
+            """,
+        ),
+        (
+            "plain PM, no ML mention",
+            """
+            Senior Product Manager to own our payments roadmap. You'll define
+            requirements, work with engineering and design, and ship high-quality
+            features. 5+ years of product experience required.
+            """,
+        ),
+    ]
+
+    for label, jd in cases:
+        result = score_ai_pm_fit(jd)
+        signals = ", ".join(result["matched_signals"]) or "none"
+        print(f"[{label}] score={result['score']}/3  signals=[{signals}]")
+        print(f"  → {result['summary']}\n")
