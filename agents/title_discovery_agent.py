@@ -11,6 +11,24 @@ client = anthropic.Anthropic(max_retries=4)
 
 RESUME_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resume.txt")
 
+# Baseline titles always searched regardless of what the LLM discovers.
+# Broad titles (plain PM, Senior PM) are kept intentionally — the
+# requirements-fit score in job_search.score_ai_pm_fit() does the real
+# filtering; title search is just a net cast wide.
+BASELINE_TITLES = [
+    "Product Manager",
+    "Senior Product Manager",
+    "Principal Product Manager",
+    "AI Product Manager",
+    "ML Product Manager",
+    "Machine Learning Product Manager",
+    "Product Manager, Machine Learning Platform",
+    "Technical Product Manager, AI/ML",
+    "Product Manager, Responsible AI",
+    "AI Governance Product Manager",
+    "Product Manager, MLOps",
+]
+
 
 def _load_resume() -> str:
     with open(RESUME_PATH, "r") as f:
@@ -79,7 +97,20 @@ RESUME:
     )
     log_usage("discovery", "title_discovery_agent", _model, message, int((time.monotonic() - _t0) * 1000))
 
-    return parse_llm_json(message.content[0].text)
+    result = parse_llm_json(message.content[0].text)
+
+    # Merge baseline titles into direct_fit so they are always searched.
+    # De-duplicate case-insensitively; LLM suggestions take priority.
+    existing = {t["title"].lower() for t in result.get("direct_fit", [])}
+    for title in BASELINE_TITLES:
+        if title.lower() not in existing:
+            result.setdefault("direct_fit", []).append({
+                "title": title,
+                "rationale": "Baseline search term — broad net for roles whose requirements match despite generic title.",
+            })
+            existing.add(title.lower())
+
+    return result
 
 
 if __name__ == "__main__":
