@@ -1143,7 +1143,7 @@ if page == "search":
         st.markdown("#### Step 2 — Select roles to run Job Prepper on")
 
         # Filter bar
-        fb1, fb2, fb3, fb4 = st.columns([1.2, 1, 1, 3])
+        fb1, fb2, fb3, fb4, fb5 = st.columns([1.2, 1.4, 1, 1, 2])
         with fb1:
             min_match = st.selectbox(
                 "Min. match",
@@ -1153,17 +1153,33 @@ if page == "search":
                 label_visibility="collapsed",
             )
         with fb2:
+            sort_by = st.selectbox(
+                "Sort by",
+                options=["AI PM fit", "Title match"],
+                index=0, key="js_sort_by",
+                label_visibility="collapsed",
+            )
+        with fb3:
             if st.button("Select all", key="js_select_all_btn", use_container_width=True):
                 _filtered_for_select = [j for j in jobs_src if j.get("title_match", 0) >= min_match]
                 st.session_state.js_selected = {_job_key(j) for j in _filtered_for_select}
                 st.rerun()
-        with fb3:
+        with fb4:
             if st.button("Clear", key="js_clear_btn", use_container_width=True):
                 st.session_state.js_selected = set()
                 st.rerun()
 
         jobs = [j for j in jobs_src if j.get("title_match", 0) >= min_match]
-        st.caption(f"{len(jobs)} jobs shown · sorted by match score")
+
+        # Sort by chosen dimension
+        if sort_by == "AI PM fit":
+            jobs.sort(key=lambda j: j.get("ai_pm_fit", {}).get("score", 0), reverse=True)
+            sort_label = "sorted by AI PM fit"
+        else:
+            jobs.sort(key=lambda j: j.get("title_match", 0), reverse=True)
+            sort_label = "sorted by title match"
+
+        st.caption(f"{len(jobs)} jobs shown · {sort_label}")
 
         if not jobs:
             st.info("No jobs match that filter. Try lowering the min. match % or 'All' sources.")
@@ -1171,11 +1187,12 @@ if page == "search":
             selected: set = st.session_state.get("js_selected", set())
 
             # Column header
-            _hc1, _hc2, _hc3, _hc4, _hc5 = st.columns([0.4, 3.5, 3, 0.7, 1.2])
+            _hc1, _hc2, _hc3, _hc4, _hc5, _hc6 = st.columns([0.4, 3, 2.8, 1.5, 0.7, 1.2])
             _hc2.caption("Title")
             _hc3.caption("Company · Location · Date")
-            _hc4.caption("Match")
-            _hc5.caption("Source")
+            _hc4.caption("AI PM fit")
+            _hc5.caption("Match")
+            _hc6.caption("Source")
             st.markdown('<hr style="margin:4px 0 6px;border-color:#E2E8F0">', unsafe_allow_html=True)
 
             for i, job in enumerate(jobs):
@@ -1184,7 +1201,19 @@ if page == "search":
                 tm_color = "#059669" if tm >= 75 else "#d97706" if tm >= 50 else "#dc2626"
                 meta = f'{job["company"]} · {job.get("location") or "—"} · {job.get("date_posted","")}'
 
-                c_chk, c_title, c_meta, c_match, c_via = st.columns([0.4, 3.5, 3, 0.7, 1.2])
+                fit = job.get("ai_pm_fit", {})
+                fit_score = fit.get("score", 0)
+                fit_signals = fit.get("matched_signals", [])
+                # Pip display: filled dot per matched signal, empty per missing
+                fit_pips = "●" * fit_score + "○" * (3 - fit_score)
+                fit_pip_color = "#059669" if fit_score == 3 else "#d97706" if fit_score >= 1 else "#94a3b8"
+                fit_label = ", ".join(s.replace("model metrics ownership", "model metrics")
+                                       .replace("DS/ML partnership", "DS partner")
+                                       .replace("production AI systems", "prod AI")
+                                       for s in fit_signals) if fit_signals else "—"
+                fit_title = fit.get("summary", "")
+
+                c_chk, c_title, c_meta, c_fit, c_match, c_via = st.columns([0.4, 3, 2.8, 1.5, 0.7, 1.2])
                 with c_chk:
                     checked = st.checkbox("", key=f"sel_{i}", value=(jk in selected))
                     if checked: selected.add(jk)
@@ -1199,6 +1228,15 @@ if page == "search":
                             st.caption(job["description_snippet"])
                 with c_meta:
                     st.markdown(f'<span style="font-size:13px;color:#64748b">{meta}</span>', unsafe_allow_html=True)
+                with c_fit:
+                    opacity = "1" if fit_score > 0 else "0.4"
+                    st.markdown(
+                        f'<div title="{fit_title}" style="opacity:{opacity};padding-top:2px">'
+                        f'<span style="font-size:13px;font-weight:700;color:{fit_pip_color};letter-spacing:1px">{fit_pips}</span> '
+                        f'<span style="font-size:11px;color:#64748b">{fit_label}</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
                 with c_match:
                     st.markdown(f'<div style="font-size:13px;font-weight:700;color:{tm_color};padding-top:4px">{tm}%</div>', unsafe_allow_html=True)
                 with c_via:
