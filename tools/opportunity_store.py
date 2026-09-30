@@ -2,7 +2,7 @@
 Opportunity store — single source of record for the job funnel.
 
 Each opportunity moves through stages:
-  discovered → screened_in / screened_out → tailored → applied
+  screened_in / screened_out → tailored → applied
   → responded → interviewing → offer / rejected / ghosted / withdrawn
 """
 
@@ -45,7 +45,7 @@ def create_opportunity(
     searched_title: str = "",
     jd_snapshot: str = "",
     source: str = "manual",
-    stage: str = "discovered",
+    stage: str = "tailored",
     eval_result: dict | None = None,
     ats_result: dict | None = None,
     notes: str = "",
@@ -110,51 +110,3 @@ def list_opportunities(stage: str | None = None) -> list[dict]:
         q = q.eq("stage", stage)
     resp = q.order("stage_updated_at", desc=True).execute()
     return resp.data or []
-
-
-def title_performance_context() -> str:
-    """
-    Build a human-readable summary of per-searched-title funnel performance.
-    Used by discover_titles() to drop low-yield titles and propose replacements.
-    Returns empty string if no data exists yet.
-    """
-    opps = list_opportunities()
-    if not opps:
-        return ""
-
-    stats: dict[str, dict] = {}
-    for o in opps:
-        t = o.get("searched_title") or "manual"
-        if t == "manual":
-            continue
-        if t not in stats:
-            stats[t] = {"found": 0, "screened_in": 0, "applied": 0}
-        stats[t]["found"] += 1
-        if o.get("stage") in ("screened_in", "tailored", "applied", "responded", "interviewing", "offer"):
-            stats[t]["screened_in"] += 1
-        if o.get("stage") in ("applied", "responded", "interviewing", "offer"):
-            stats[t]["applied"] += 1
-
-    if not stats:
-        return ""
-
-    lines = []
-    for t, s in sorted(stats.items(), key=lambda x: -x[1]["found"]):
-        scr_rate = round(s["screened_in"] / s["found"] * 100) if s["found"] else 0
-        lines.append(
-            f"  - {t}: {s['found']} found, {s['screened_in']} screened in ({scr_rate}%), {s['applied']} applied"
-        )
-
-    return "\n".join(lines)
-
-
-def seen_keys() -> set[str]:
-    """
-    Dedup keys for every opportunity ever created.
-    Used by discovery to skip jobs already in the funnel.
-    """
-    resp = _client().table(TABLE).select("url,title,company").execute()
-    keys = set()
-    for row in (resp.data or []):
-        keys.add(_dedup_key(row.get("title", ""), row.get("company", ""), row.get("url", "")))
-    return keys
